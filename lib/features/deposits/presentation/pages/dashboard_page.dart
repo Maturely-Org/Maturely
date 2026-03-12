@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../domain/entities/deposit.dart';
 import '../providers/deposit_providers.dart';
-import '../providers/lineage_providers.dart';
-import 'deposit_form_page.dart';
+import '../../../settings/presentation/providers/settings_provider.dart';
 
 class DashboardPage extends ConsumerWidget {
   const DashboardPage({super.key});
@@ -11,17 +11,13 @@ class DashboardPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
+      backgroundColor: Colors.grey[50],
       body: const _DepositsList(),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => const DepositFormPage(),
-            ),
-          );
-        },
-        icon: const Icon(Icons.add),
+        onPressed: () => context.push('/deposit/new'),
+        icon: const Icon(Icons.add_rounded),
         label: const Text('Add Deposit'),
+        elevation: 4,
       ),
     );
   }
@@ -40,344 +36,122 @@ class _DepositsListState extends ConsumerState<_DepositsList> {
   @override
   Widget build(BuildContext context) {
     final asyncDeposits = ref.watch(depositsListProvider);
+    final maskEnabled = ref.watch(settingsProvider).maskSensitiveData;
+
     return asyncDeposits.when(
       data: (items) {
         if (items.isEmpty) {
-          return const Center(
-            child: Text('No deposits yet. Tap + to add one.'),
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.account_balance_wallet_outlined, size: 80, color: Colors.grey[300]),
+                const SizedBox(height: 16),
+                Text('No deposits yet', style: Theme.of(context).textTheme.titleLarge?.copyWith(color: Colors.grey[400])),
+                const SizedBox(height: 8),
+                ElevatedButton(
+                  onPressed: () => context.push('/deposit/new'),
+                  child: const Text('Add your first deposit'),
+                ),
+              ],
+            ),
           );
         }
 
-        // Filter deposits based on upcoming maturities
         final filteredItems = _showUpcomingOnly
-            ? items
-                .where(
-                    (d) => d.isDueSoon(3) && d.status == DepositStatus.active)
-                .toList()
+            ? items.where((d) => d.isDueSoon(3) && d.status == DepositStatus.active).toList()
             : items;
 
-        // Calculate statistics - treat matured deposits as matured regardless of status
-        final activeDeposits = items
-            .where((d) => d.status == DepositStatus.active && !d.isMatured)
-            .toList();
-        final upcomingCount =
-            activeDeposits.where((d) => d.isDueSoon(3)).length;
-        final maturedCount = items.where((d) => d.isMatured).length;
-        final activeCount = activeDeposits.length;
+        final activeDeposits = items.where((d) => d.status == DepositStatus.active && !d.isMatured).toList();
+        final upcomingCount = activeDeposits.where((d) => d.isDueSoon(3)).length;
+        final maturedCount = items.where((d) => d.isMatured && d.status == DepositStatus.active).length;
+        final totalValue = items.fold<double>(0, (sum, d) => sum + d.amountDeposited);
 
-        return Column(
-          children: [
-            // Summary Cards
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _SummaryCard(
-                      title: 'Active',
-                      count: activeCount,
-                      color: Colors.green,
-                      icon: Icons.account_balance,
+        return CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverAppBar(
+              expandedHeight: 180,
+              floating: false,
+              pinned: true,
+              backgroundColor: Colors.blue[800],
+              flexibleSpace: FlexibleSpaceBar(
+                title: Text('My Portfolio', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                background: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.blue[900]!, Colors.blue[600]!],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _SummaryCard(
-                      title: 'Due Soon',
-                      count: upcomingCount,
-                      color: Colors.orange,
-                      icon: Icons.schedule,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 40, 20, 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                         Text('Total Investment', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                         const SizedBox(height: 4),
+                         Text(
+                           maskEnabled ? '₹ ••••••••' : '₹${totalValue.toStringAsFixed(0)}',
+                           style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold),
+                         ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _SummaryCard(
-                      title: 'Matured',
-                      count: maturedCount,
-                      color: Colors.blue,
-                      icon: Icons.check_circle,
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
-            // Filter Toggle
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _showUpcomingOnly
-                          ? 'Showing deposits due in next 3 days (${filteredItems.length})'
-                          : 'All deposits (${items.length})',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                  ),
-                  Switch(
-                    value: _showUpcomingOnly,
-                    onChanged: (value) {
-                      setState(() {
-                        _showUpcomingOnly = value;
-                      });
-                    },
-                  ),
-                  const Text('Upcoming Only'),
-                ],
+            
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+                child: Row(
+                  children: [
+                    Expanded(child: _SummaryBox(title: 'Active', count: activeDeposits.length, color: Colors.green, icon: Icons.check_circle_rounded)),
+                    const SizedBox(width: 8),
+                    Expanded(child: _SummaryBox(title: 'Due Soon', count: upcomingCount, color: Colors.orange, icon: Icons.timer_rounded)),
+                    const SizedBox(width: 8),
+                    Expanded(child: _SummaryBox(title: 'Matured', count: maturedCount, color: Colors.red, icon: Icons.notification_important_rounded)),
+                  ],
+                ),
               ),
             ),
-            // Deposits List
-            Expanded(
-              child: RefreshIndicator(
-                onRefresh: () async {
-                  ref.invalidate(depositsListProvider);
-                  ref.invalidate(chainsWithDepositsProvider);
-                  ref.invalidate(orphanedDepositsProvider);
-                  await ref.read(depositsListProvider.future);
-                },
-                child: filteredItems.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.schedule,
-                              size: 64,
-                              color: Colors.grey[400],
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              _showUpcomingOnly
-                                  ? 'No deposits due in next 3 days'
-                                  : 'No deposits found',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodyLarge
-                                  ?.copyWith(
-                                    color: Colors.grey[600],
-                                  ),
-                            ),
-                          ],
+
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('RECENT DEPOSITS', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey[600], letterSpacing: 1.2)),
+                    Row(
+                      children: [
+                        const Text('Upcoming', style: TextStyle(fontSize: 12)),
+                        Switch.adaptive(
+                          value: _showUpcomingOnly,
+                          onChanged: (v) => setState(() => _showUpcomingOnly = v),
                         ),
-                      )
-                    : ListView.separated(
-                        padding: const EdgeInsets.all(12),
-                        itemBuilder: (context, index) {
-                          final d = filteredItems[index];
-                          return Dismissible(
-                            key: Key(d.id),
-                            direction: DismissDirection.endToStart,
-                            background: Container(
-                              color: Colors.red,
-                              alignment: Alignment.centerRight,
-                              padding: const EdgeInsets.only(right: 20),
-                              child:
-                                  const Icon(Icons.delete, color: Colors.white),
-                            ),
-                            confirmDismiss: (direction) async {
-                              return await showDialog<bool>(
-                                    context: context,
-                                    builder: (context) => AlertDialog(
-                                      title: const Text('Delete Deposit'),
-                                      content: Text(
-                                          'Are you sure you want to delete deposit ${d.srNo}?'),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.of(context).pop(false),
-                                          child: const Text('Cancel'),
-                                        ),
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.of(context).pop(true),
-                                          child: const Text('Delete'),
-                                        ),
-                                      ],
-                                    ),
-                                  ) ??
-                                  false;
-                            },
-                            onDismissed: (direction) async {
-                              try {
-                                final repo =
-                                    ref.read(depositRepositoryProvider);
-                                final lineageRepo =
-                                    ref.read(lineageRepositoryProvider);
-
-                                // Remove links that involve this deposit
-                                final links =
-                                    await lineageRepo.getDepositLinks(d.id);
-                                for (final link in links) {
-                                  await lineageRepo.unlinkDeposits(
-                                      link.parentDepositId,
-                                      link.childDepositId);
-                                }
-
-                                // Remove from any chains holding it
-                                final chains =
-                                    await lineageRepo.getChainsWithDeposits();
-                                for (final chain in chains) {
-                                  if (chain.depositIds.contains(d.id)) {
-                                    await lineageRepo.removeDepositFromChain(
-                                        chain.id, d.id);
-                                  }
-                                }
-
-                                await repo.deleteDeposit(d.id);
-                                if (mounted) {
-                                  ref.invalidate(depositsListProvider);
-                                  ref.invalidate(chainsWithDepositsProvider);
-                                  ref.invalidate(orphanedDepositsProvider);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                        content:
-                                            Text('Deposit ${d.srNo} deleted')),
-                                  );
-                                }
-                              } catch (e) {
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                        content: Text('Failed to delete: $e')),
-                                  );
-                                }
-                              }
-                            },
-                            child: Card(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  border: d.isDueSoon(3)
-                                      ? Border.all(
-                                          color: Colors.orange, width: 2)
-                                      : null,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: ListTile(
-                                  leading: CircleAvatar(
-                                    backgroundColor: d.isMatured
-                                        ? Colors.blue
-                                        : (d.isDueSoon(3)
-                                            ? Colors.orange
-                                            : (d.status == DepositStatus.active
-                                                ? Colors.green
-                                                : Colors.grey)),
-                                    child: Icon(
-                                      d.isMatured
-                                          ? Icons.check_circle
-                                          : (d.isDueSoon(3)
-                                              ? Icons.schedule
-                                              : (d.status ==
-                                                      DepositStatus.active
-                                                  ? Icons.account_balance
-                                                  : Icons.cancel)),
-                                      color: Colors.white,
-                                      size: 20,
-                                    ),
-                                  ),
-                                  title: Row(
-                                    children: [
-                                      Text('${d.srNo} • ${d.bankName}'),
-                                      if (d.isDueSoon(3)) ...[
-                                        const SizedBox(width: 8),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 6, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: Colors.orange,
-                                            borderRadius:
-                                                BorderRadius.circular(10),
-                                          ),
-                                          child: const Text(
-                                            'DUE SOON',
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                  subtitle: Text('${d.holdersDisplay}  •  Due: '
-                                      '${d.dueDate.day.toString().padLeft(2, '0')}-'
-                                      '${d.dueDate.month.toString().padLeft(2, '0')}-${d.dueDate.year}'),
-                                  trailing: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Text(
-                                          '₹${d.amountDeposited.toStringAsFixed(2)}'),
-                                      Column(
-                                        children: [
-                                          Text(
-                                            d.isMatured
-                                                ? 'MATURED'
-                                                : d.status.name.toUpperCase(),
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              color: d.isMatured
-                                                  ? Colors.blue
-                                                  : (d.status ==
-                                                          DepositStatus.active
-                                                      ? Colors.green
-                                                      : Colors.grey),
-                                            ),
-                                          ),
-                                          if (d.requiresAction) ...[
-                                            const SizedBox(height: 2),
-                                            Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 6,
-                                                      vertical: 2),
-                                              decoration: BoxDecoration(
-                                                color: Colors.orange[100],
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                              ),
-                                              child: Text(
-                                                'ACTION REQUIRED',
-                                                style: TextStyle(
-                                                  fontSize: 8,
-                                                  fontWeight: FontWeight.bold,
-                                                  color: Colors.orange[700],
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                  onTap: () {
-                                    // Navigate to appropriate page based on status
-                                    if (d.requiresAction) {
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
-                                        SnackBar(
-                                            content: Text(
-                                                'Matured deposit: ${d.srNo}')),
-                                      );
-                                    } else {
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
-                                        SnackBar(
-                                            content: Text(
-                                                'Edit deposit: ${d.srNo}')),
-                                      );
-                                    }
-                                  },
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
-                        itemCount: filteredItems.length,
-                      ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
+
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final d = filteredItems[index];
+                    return _DepositListItem(deposit: d, maskEnabled: maskEnabled);
+                  },
+                  childCount: filteredItems.length,
+                ),
+              ),
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 100)),
           ],
         );
       },
@@ -387,42 +161,107 @@ class _DepositsListState extends ConsumerState<_DepositsList> {
   }
 }
 
-class _SummaryCard extends StatelessWidget {
+class _SummaryBox extends StatelessWidget {
   final String title;
   final int count;
   final Color color;
   final IconData icon;
 
-  const _SummaryCard({
-    required this.title,
-    required this.count,
-    required this.color,
-    required this.icon,
-  });
+  const _SummaryBox({required this.title, required this.count, required this.color, required this.icon});
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          children: [
-            Icon(icon, color: color, size: 24),
-            const SizedBox(height: 4),
-            Text(
-              count.toString(),
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: color,
-                    fontWeight: FontWeight.bold,
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4))],
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(height: 8),
+          Text(count.toString(), style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
+          Text(title, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+        ],
+      ),
+    );
+  }
+}
+
+class _DepositListItem extends ConsumerWidget {
+  final Deposit deposit;
+  final bool maskEnabled;
+
+  const _DepositListItem({required this.deposit, required this.maskEnabled});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final statusColor = deposit.isMatured ? Colors.red : (deposit.isDueSoon(3) ? Colors.orange : Colors.green);
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 8, offset: const Offset(0, 2))],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () {
+              if (deposit.requiresAction) {
+                context.push('/deposit/matured/${deposit.id}');
+              } else {
+                context.push('/deposit/${deposit.id}');
+              }
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      deposit.isMatured ? Icons.error_outline_rounded : (deposit.isDueSoon(3) ? Icons.warning_amber_rounded : Icons.account_balance_rounded),
+                      color: statusColor,
+                    ),
                   ),
-            ),
-            Text(
-              title,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.grey[600],
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(deposit.bankName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                        Text('${deposit.holdersDisplay} • ${maskEnabled ? '••••' : deposit.srNo}', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                      ],
+                    ),
                   ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        maskEnabled ? '₹ ••••' : '₹${deposit.amountDeposited.toStringAsFixed(0)}',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                      Text(
+                        'Due: ${deposit.dueDate.day}/${deposit.dueDate.month}/${deposit.dueDate.year}',
+                        style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ],
+          ),
         ),
       ),
     );

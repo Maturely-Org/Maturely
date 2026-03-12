@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 import '../../domain/entities/deposit_chain.dart';
 import '../../domain/entities/deposit.dart';
 import '../providers/lineage_providers.dart';
+import '../providers/deposit_providers.dart';
+import 'deposit_form_page.dart';
 
 class ChainDetailsPage extends ConsumerStatefulWidget {
   final String chainId;
@@ -37,7 +39,6 @@ class _ChainDetailsPageState extends ConsumerState<ChainDetailsPage> {
       final chain = await lineageRepo.getChain(widget.chainId);
       List<Deposit> deposits = [];
       if (chain != null && chain.depositIds.isNotEmpty) {
-        // Use the first deposit in the chain to collect the lineage
         deposits = await lineageRepo.getDepositLineage(chain.depositIds.first);
       }
 
@@ -128,174 +129,224 @@ class _ChainDetailsPageState extends ConsumerState<ChainDetailsPage> {
       ),
       body: RefreshIndicator(
         onRefresh: _loadChainData,
-        child: SingleChildScrollView(
+        child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Chain Info Card
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          CircleAvatar(
-                            backgroundColor: Theme.of(context).primaryColor,
-                            child: Text(
-                              _chain!.name.substring(0, 1).toUpperCase(),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Chain Info Card
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
                               children: [
-                                Text(
-                                  _chain!.name,
-                                  style: Theme.of(context).textTheme.titleLarge,
-                                ),
-                                if (_chain!.description != null)
-                                  Text(
-                                    _chain!.description!,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodyMedium
-                                        ?.copyWith(
-                                          color: Colors.grey[600],
-                                        ),
+                                CircleAvatar(
+                                  backgroundColor: Theme.of(context).primaryColor,
+                                  child: Text(
+                                    _chain!.name.substring(0, 1).toUpperCase(),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        _chain!.name,
+                                        style: Theme.of(context).textTheme.titleLarge,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      if (_chain!.description != null)
+                                        Text(
+                                          _chain!.description!,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodyMedium
+                                              ?.copyWith(
+                                                color: Colors.grey[600],
+                                              ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: _getStatusColor(_chain!.status)
+                                        .withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    _chain!.status.name.toUpperCase(),
+                                    style: TextStyle(
+                                      color: _getStatusColor(_chain!.status),
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
                               ],
                             ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: _getStatusColor(_chain!.status)
-                                  .withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(12),
+                            const SizedBox(height: 16),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildStatCard(
+                                    'Total Deposits',
+                                    _chain!.totalDeposits.toString(),
+                                    Icons.account_balance,
+                                    Colors.blue,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: _buildStatCard(
+                                    'Current Value',
+                                    '₹${_chain!.currentValue.toStringAsFixed(0)}',
+                                    Icons.attach_money,
+                                    Colors.green,
+                                  ),
+                                ),
+                              ],
                             ),
-                            child: Text(
-                              _chain!.status.name.toUpperCase(),
-                              style: TextStyle(
-                                color: _getStatusColor(_chain!.status),
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // Deposits Section Header
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final w =
+                            constraints.maxWidth.isFinite ? constraints.maxWidth : 400.0;
+                        final isNarrow = w < 520;
+
+                        final title = Text(
+                          'Deposits in Chain (${_deposits.length})',
+                          style: Theme.of(context).textTheme.headlineSmall,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        );
+
+                        final actions = Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          alignment: WrapAlignment.end,
+                          children: [
+                            TextButton.icon(
+                              onPressed: () => _showAddDepositDialog(),
+                              icon: const Icon(Icons.add),
+                              label: const Text('Add Deposit'),
+                            ),
+                            if (_deposits.isNotEmpty)
+                              TextButton.icon(
+                                onPressed: _reinvestLatest,
+                                icon: const Icon(Icons.trending_up),
+                                label: const Text('Reinvest latest'),
                               ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildStatCard(
-                              'Total Deposits',
-                              _chain!.totalDeposits.toString(),
-                              Icons.account_balance,
-                              Colors.blue,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildStatCard(
-                              'Current Value',
-                              '₹${_chain!.currentValue.toStringAsFixed(0)}',
-                              Icons.attach_money,
-                              Colors.green,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+                          ],
+                        );
+
+                        if (isNarrow) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              title,
+                              const SizedBox(height: 8),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: actions,
+                              ),
+                            ],
+                          );
+                        }
+
+                        return Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(child: title),
+                            const SizedBox(width: 12),
+                            actions,
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                 ),
               ),
+            ),
 
-              const SizedBox(height: 24),
-
-              // Deposits Section
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Deposits in Chain (${_deposits.length})',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  Row(
-                    children: [
-                      TextButton.icon(
-                        onPressed: () => _showAddDepositDialog(),
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add Deposit'),
+            if (_deposits.isEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.account_balance_wallet_outlined,
+                            size: 64,
+                            color: Colors.grey[400],
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No Deposits in Chain',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Add deposits to this chain to track their lineage',
+                            style:
+                                Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                      color: Colors.grey[600],
+                                    ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 8),
-                      if (_deposits.isNotEmpty)
-                        TextButton.icon(
-                          onPressed: _reinvestLatest,
-                          icon: const Icon(Icons.trending_up),
-                          label: const Text('Reinvest latest'),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              if (_deposits.isEmpty)
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      children: [
-                        Icon(
-                          Icons.account_balance_wallet_outlined,
-                          size: 64,
-                          color: Colors.grey[400],
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'No Deposits in Chain',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Add deposits to this chain to track their lineage',
-                          style:
-                              Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: Colors.grey[600],
-                                  ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
                     ),
                   ),
-                )
-              else
-                ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _deposits.length,
-                  itemBuilder: (context, index) {
-                    final deposit = _deposits[index];
-                    return _DepositCard(
-                      deposit: deposit,
-                      onTap: () => _navigateToDeposit(deposit),
-                      onRemove: () => _showRemoveDepositDialog(deposit),
-                    );
-                  },
                 ),
-            ],
-          ),
+              )
+            else
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final deposit = _deposits[index];
+                      return _DepositCard(
+                        deposit: deposit,
+                        onTap: () => _navigateToDeposit(deposit),
+                        onRemove: () => _showRemoveDepositDialog(deposit),
+                      );
+                    },
+                    childCount: _deposits.length,
+                  ),
+                ),
+              ),
+            const SliverToBoxAdapter(child: SizedBox(height: 120)),
+          ],
         ),
       ),
     );
@@ -344,23 +395,13 @@ class _ChainDetailsPageState extends ConsumerState<ChainDetailsPage> {
   void _reinvestLatest() {
     if (_deposits.isEmpty) return;
     final latest = _deposits.last;
-    // Navigate to new deposit form with previousDepositId to trigger lineage linking
-    final uri = Uri(
-      path: '/deposit/new',
-      queryParameters: {
-        'previousDepositId': latest.id,
-        'holderName': latest.holdersDisplay,
-        'bankName': latest.bankName,
-        'accountNumber': latest.accountNumber,
-        'amountDeposited': latest.dueAmount.toString(),
-        'dateDeposited': DateTime.now().millisecondsSinceEpoch.toString(),
-        'dueDate': DateTime.now()
-            .add(const Duration(days: 365))
-            .millisecondsSinceEpoch
-            .toString(),
-      },
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DepositFormPage(
+          reinvestSeed: ReinvestSeed.fromDeposit(latest),
+        ),
+      ),
     );
-    context.push(uri.toString());
   }
 
   void _showEditChainDialog() {
@@ -399,11 +440,14 @@ class _ChainDetailsPageState extends ConsumerState<ChainDetailsPage> {
           ElevatedButton(
             onPressed: () {
               if (nameController.text.trim().isNotEmpty) {
-                // TODO: Implement chain update
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Chain update coming soon!')),
+                final updatedChain = _chain!.copyWith(
+                  name: nameController.text.trim(),
+                  description: descriptionController.text.trim().isEmpty ? null : descriptionController.text.trim(),
                 );
+                ref.read(chainOperationsProvider.notifier).updateChain(updatedChain).then((_) {
+                  _loadChainData();
+                  if (context.mounted) Navigator.of(context).pop();
+                });
               }
             },
             child: const Text('Save'),
@@ -428,11 +472,12 @@ class _ChainDetailsPageState extends ConsumerState<ChainDetailsPage> {
           ),
           ElevatedButton(
             onPressed: () {
-              // TODO: Implement chain deletion
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Chain deletion coming soon!')),
-              );
+              ref.read(chainOperationsProvider.notifier).deleteChain(widget.chainId).then((_) {
+                if (context.mounted) {
+                  Navigator.of(context).pop(); // pop dialog
+                  context.pop(); // pop page using go_router
+                }
+              });
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Delete'),
@@ -443,10 +488,54 @@ class _ChainDetailsPageState extends ConsumerState<ChainDetailsPage> {
   }
 
   void _showAddDepositDialog() {
-    // TODO: Implement add deposit to chain dialog
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-          content: Text('Add deposit to chain feature coming soon!')),
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add Deposit to Chain'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Consumer(
+            builder: (context, ref, child) {
+              final orphansAsync = ref.watch(orphanedDepositsProvider);
+              return orphansAsync.when(
+                data: (deposits) {
+                  if (deposits.isEmpty) return const Text('No available deposits to add.');
+                  return ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: deposits.length,
+                    itemBuilder: (context, index) {
+                      final deposit = deposits[index];
+                      return ListTile(
+                        title: Text('${deposit.bankName} - ${deposit.srNo}'),
+                        subtitle: Text('₹${deposit.amountDeposited.toStringAsFixed(0)}'),
+                        onTap: () async {
+                          await ref.read(chainOperationsProvider.notifier).addDepositToChain(widget.chainId, deposit.id);
+                          final depositRepo = ref.read(depositRepositoryProvider);
+                          final d = await depositRepo.getDepositById(deposit.id);
+                          if (d != null) {
+                            await depositRepo.updateDeposit(d.copyWith(chainId: widget.chainId));
+                          }
+                          _loadChainData();
+                          ref.invalidate(orphanedDepositsProvider);
+                          if (context.mounted) Navigator.of(context).pop();
+                        },
+                      );
+                    },
+                  );
+                },
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (e, st) => Text('Error: $e'),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -473,11 +562,18 @@ class _ChainDetailsPageState extends ConsumerState<ChainDetailsPage> {
           ),
           ElevatedButton(
             onPressed: () {
-              // TODO: Implement remove deposit from chain
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Remove from chain coming soon!')),
-              );
+              ref.read(chainOperationsProvider.notifier)
+                 .removeDepositFromChain(widget.chainId, deposit.id)
+                 .then((_) async {
+                   final depositRepo = ref.read(depositRepositoryProvider);
+                   final d = await depositRepo.getDepositById(deposit.id);
+                   if (d != null) {
+                     await depositRepo.updateDeposit(d.copyWith(chainId: null));
+                   }
+                   _loadChainData();
+                   ref.invalidate(orphanedDepositsProvider);
+                   if (context.mounted) Navigator.of(context).pop();
+                 });
             },
             child: const Text('Remove'),
           ),

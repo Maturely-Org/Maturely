@@ -3,624 +3,316 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/analytics_provider.dart';
 import '../widgets/charts.dart';
 import '../../domain/entities/portfolio_analytics.dart';
-import '../../../deposits/domain/entities/deposit.dart';
+import '../../../settings/presentation/providers/settings_provider.dart';
 
 class AnalyticsDashboard extends ConsumerWidget {
-  const AnalyticsDashboard({Key? key}) : super(key: key);
+  const AnalyticsDashboard({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final analyticsAsync = ref.watch(portfolioAnalyticsProvider);
+    final maskEnabled = ref.watch(settingsProvider).maskSensitiveData;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Portfolio Analytics'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () {
-              ref.invalidate(portfolioAnalyticsProvider);
-            },
-          ),
-        ],
-      ),
+      backgroundColor: Colors.grey[50],
       body: analyticsAsync.when(
-        data: (analytics) => _buildDashboard(context, analytics),
+        data: (analytics) => _AnalyticsContent(analytics: analytics, maskEnabled: maskEnabled),
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stack) => Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.error_outline,
-                size: 64,
-                color: Theme.of(context).colorScheme.error,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Failed to load analytics',
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                error.toString(),
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Colors.grey,
-                    ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () {
-                  ref.invalidate(portfolioAnalyticsProvider);
-                },
-                child: const Text('Retry'),
+        error: (error, stack) => _ErrorView(error: error.toString()),
+      ),
+    );
+  }
+}
+
+class _AnalyticsContent extends ConsumerWidget {
+  final PortfolioAnalytics analytics;
+  final bool maskEnabled;
+
+  const _AnalyticsContent({required this.analytics, required this.maskEnabled});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return RefreshIndicator(
+      onRefresh: () async {
+        ref.invalidate(portfolioAnalyticsProvider);
+        await ref.read(portfolioAnalyticsProvider.future);
+      },
+      child: CustomScrollView(
+        slivers: [
+          SliverAppBar.large(
+            title: const Text('Portfolio Analysis', style: TextStyle(fontWeight: FontWeight.bold)),
+            pinned: true,
+            backgroundColor: Colors.indigo[900],
+            foregroundColor: Colors.white,
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: () => ref.invalidate(portfolioAnalyticsProvider),
               ),
             ],
           ),
-        ),
+          
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                   _buildSummarySection(context),
+                   const SizedBox(height: 24),
+                   _SectionHeader(title: 'Growth & Trends', icon: Icons.trending_up, color: Colors.green),
+                   const SizedBox(height: 12),
+                   _buildTrendsCard(context),
+                   const SizedBox(height: 24),
+                   _SectionHeader(title: 'Asset Distribution', icon: Icons.pie_chart, color: Colors.blue),
+                   const SizedBox(height: 12),
+                   _buildDistributionCards(context),
+                   const SizedBox(height: 24),
+                   _SectionHeader(title: 'Upcoming Maturities', icon: Icons.event, color: Colors.orange),
+                   const SizedBox(height: 12),
+                   _buildMaturityCard(context),
+                   const SizedBox(height: 24),
+                   _SectionHeader(title: 'Top Performers', icon: Icons.star, color: Colors.purple),
+                   const SizedBox(height: 12),
+                   _buildTopPerformersCard(context),
+                   const SizedBox(height: 100),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildDashboard(BuildContext context, PortfolioAnalytics analytics) {
-    return RefreshIndicator(
-      onRefresh: () async {
-        // Refresh will be handled by provider invalidation
-      },
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildSummaryCards(context, analytics.summary),
-            const SizedBox(height: 24),
-            _buildPerformanceSection(context, analytics.performance),
-            const SizedBox(height: 24),
-            _buildDistributionSection(context, analytics),
-            const SizedBox(height: 24),
-            _buildTrendsSection(context, analytics.monthlyTrends),
-            const SizedBox(height: 24),
-            _buildMaturitySection(context, analytics.maturityTimeline),
-            const SizedBox(height: 24),
-            _buildTopPerformersSection(context, analytics.topPerformers),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSummaryCards(BuildContext context, PortfolioSummary summary) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildSummarySection(BuildContext context) {
+    final s = analytics.summary;
+    return GridView.count(
+      crossAxisCount: 2,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 12,
+      crossAxisSpacing: 12,
+      childAspectRatio: 1.6,
       children: [
-        Text(
-          'Portfolio Summary',
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-        ),
-        const SizedBox(height: 16),
-        Row(
+        _MetricCard(title: 'Total Invested', value: maskEnabled ? '₹ ••••••' : '₹${_format(s.totalAmountDeposited)}', icon: Icons.account_balance, color: Colors.blue),
+        _MetricCard(title: 'Total Value', value: maskEnabled ? '₹ ••••••' : '₹${_format(s.totalDueAmount)}', icon: Icons.account_balance_wallet, color: Colors.indigo),
+        _MetricCard(title: 'Active Deposits', value: s.activeDeposits.toString(), icon: Icons.check_circle, color: Colors.green),
+        _MetricCard(title: 'Projected Growth', value: '₹${_format(s.totalInterestEarned)}', icon: Icons.trending_up, color: Colors.teal),
+      ],
+    );
+  }
+
+  Widget _buildTrendsCard(BuildContext context) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
           children: [
-            Expanded(
-              child: _buildSummaryCard(
-                context,
-                'Total Deposits',
-                summary.totalDeposits.toString(),
-                Icons.account_balance,
-                Colors.blue,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _buildSummaryCard(
-                context,
-                'Active',
-                summary.activeDeposits.toString(),
-                Icons.trending_up,
-                Colors.green,
-              ),
+            const Text('Monthly Growth Trend', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 20),
+            SizedBox(
+              height: 220,
+              child: MonthlyTrendChart(trends: analytics.monthlyTrends),
             ),
           ],
         ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: _buildSummaryCard(
-                context,
-                'Total Invested',
-                '₹${_formatAmount(summary.totalAmountDeposited)}',
-                Icons.monetization_on,
-                Colors.orange,
-              ),
+      ),
+    );
+  }
+
+  Widget _buildDistributionCards(BuildContext context) {
+    return Column(
+      children: [
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                const Text('Bank Distribution', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 20),
+                BankDistributionChart(banks: analytics.bankDistribution),
+                const SizedBox(height: 16),
+                _ChartLegendVertical(items: analytics.bankDistribution.map((b) => ChartDataPoint(label: b.bankName, value: b.percentage, color: b.color)).toList()),
+              ],
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _buildSummaryCard(
-                context,
-                'Total Value',
-                '₹${_formatAmount(summary.totalDueAmount)}',
-                Icons.account_balance_wallet,
-                Colors.purple,
-              ),
-            ),
-          ],
+          ),
         ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: _buildSummaryCard(
-                context,
-                'Interest Earned',
-                '₹${_formatAmount(summary.totalInterestEarned)}',
-                Icons.attach_money,
-                Colors.teal,
-              ),
+        const SizedBox(height: 12),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                const Text('Status Split', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 20),
+                StatusDistributionChart(statuses: analytics.statusDistribution),
+              ],
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _buildSummaryCard(
-                context,
-                'Due Soon',
-                summary.depositsDueSoon.toString(),
-                Icons.schedule,
-                Colors.red,
-              ),
-            ),
-          ],
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildSummaryCard(
-    BuildContext context,
-    String title,
-    String value,
-    IconData icon,
-    Color color,
-  ) {
+  Widget _buildMaturityCard(BuildContext context) {
+    return Card(
+      elevation: 0,
+       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+       child: Padding(
+         padding: const EdgeInsets.all(16),
+         child: analytics.maturityTimeline.isEmpty 
+           ? const Center(child: Text('No upcoming maturities'))
+           : Column(
+               children: analytics.maturityTimeline.take(4).map((m) => ListTile(
+                 leading: CircleAvatar(backgroundColor: Colors.orange.withOpacity(0.1), child: const Icon(Icons.timer, color: Colors.orange, size: 20)),
+                 title: Text('${m.month.month}/${m.month.year}'),
+                 subtitle: Text('${m.count} deposits maturing'),
+                 trailing: Text(maskEnabled ? '₹ •••' : '₹${_format(m.amount)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+               )).toList(),
+             ),
+       ),
+    );
+  }
+
+  Widget _buildTopPerformersCard(BuildContext context) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: analytics.topPerformers.map((p) => ListTile(
+            dense: true,
+            leading: const Icon(Icons.star, color: Colors.amber, size: 20),
+            title: Text(p.title),
+            trailing: Text(p.displayValue, style: const TextStyle(color: Colors.purple, fontWeight: FontWeight.bold)),
+          )).toList(),
+        ),
+      ),
+    );
+  }
+
+  String _format(double amount) {
+    if (amount >= 100000) return '${(amount / 100000).toStringAsFixed(1)}L';
+    if (amount >= 1000) return '${(amount / 1000).toStringAsFixed(1)}K';
+    return amount.toStringAsFixed(0);
+  }
+}
+
+class _MetricCard extends StatelessWidget {
+  final String title;
+  final String value;
+  final IconData icon;
+  final Color color;
+
+  const _MetricCard({required this.title, required this.value, required this.icon, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Row(
-            children: [
-              Icon(icon, color: color, size: 20),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: color.withOpacity(0.8),
-                        fontWeight: FontWeight.w500,
-                      ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
+          Icon(icon, color: color, size: 18),
           const SizedBox(height: 8),
-          Text(
-            value,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
-          ),
+          Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.grey[800])),
+          Text(title, style: TextStyle(fontSize: 10, color: Colors.grey[500])),
         ],
       ),
     );
   }
+}
 
-  Widget _buildPerformanceSection(
-      BuildContext context, PerformanceMetrics performance) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Color color;
+
+  const _SectionHeader({required this.title, required this.icon, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+          child: Icon(icon, color: color, size: 16),
+        ),
+        const SizedBox(width: 10),
+        Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 0.5)),
+      ],
+    );
+  }
+}
+
+class _ChartLegendVertical extends StatelessWidget {
+  final List<ChartDataPoint> items;
+  const _ChartLegendVertical({required this.items});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: items.map((i) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Row(
           children: [
-            Text(
-              'Performance Metrics',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
+            Container(width: 8, height: 8, decoration: BoxDecoration(color: _parseColor(i.color), shape: BoxShape.circle)),
+            const SizedBox(width: 8),
+            Expanded(child: Text(i.label, style: const TextStyle(fontSize: 12))),
+            Text('${i.value.toStringAsFixed(1)}%', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+          ],
+        ),
+      )).toList(),
+    );
+  }
+
+  Color _parseColor(String colorString) {
+    try {
+      if (colorString.startsWith('#')) {
+        return Color(int.parse(colorString.substring(1), radix: 16) + 0xFF000000);
+      }
+      return Colors.blue;
+    } catch (_) {
+      return Colors.blue;
+    }
+  }
+}
+
+class _ErrorView extends StatelessWidget {
+  final String error;
+  const _ErrorView({required this.error});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: Colors.red),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildMetricItem(
-                    context,
-                    'Avg Interest Rate',
-                    '${performance.averageInterestRate.toStringAsFixed(2)}%',
-                    Icons.percent,
-                  ),
-                ),
-                Expanded(
-                  child: _buildMetricItem(
-                    context,
-                    'Risk Level',
-                    performance.riskLevel,
-                    Icons.warning,
-                    color: _getRiskColor(performance.riskLevel),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildMetricItem(
-                    context,
-                    'Projected Annual Income',
-                    '₹${_formatAmount(performance.projectedAnnualIncome)}',
-                    Icons.trending_up,
-                  ),
-                ),
-                Expanded(
-                  child: _buildMetricItem(
-                    context,
-                    'Avg Maturity Period',
-                    '${performance.averageMaturityPeriod.toStringAsFixed(1)} years',
-                    Icons.schedule,
-                  ),
-                ),
-              ],
-            ),
+            Text('Analytics Error', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            Text(error, textAlign: TextAlign.center, style: TextStyle(color: Colors.grey[600])),
           ],
         ),
       ),
     );
-  }
-
-  Widget _buildMetricItem(
-    BuildContext context,
-    String label,
-    String value,
-    IconData icon, {
-    Color? color,
-  }) {
-    final itemColor = color ?? Theme.of(context).primaryColor;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 16, color: itemColor),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  label,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.grey[600],
-                      ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: itemColor,
-                ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDistributionSection(
-      BuildContext context, PortfolioAnalytics analytics) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Distribution Analysis',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    children: [
-                      Text(
-                        'Bank Distribution',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 8),
-                      BankDistributionChart(banks: analytics.bankDistribution),
-                      const SizedBox(height: 8),
-                      ChartLegend(
-                        items: analytics.bankDistribution
-                            .map((bank) => ChartDataPoint(
-                                  label: bank.bankName,
-                                  value: bank.percentage,
-                                  color: bank.color,
-                                  subtitle: '${bank.depositCount} deposits',
-                                ))
-                            .toList(),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    children: [
-                      Text(
-                        'Status Distribution',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 8),
-                      StatusDistributionChart(
-                          statuses: analytics.statusDistribution),
-                      const SizedBox(height: 8),
-                      ChartLegend(
-                        items: analytics.statusDistribution
-                            .map((status) => ChartDataPoint(
-                                  label: _getStatusLabel(status.status),
-                                  value: status.percentage,
-                                  color: status.color,
-                                  subtitle: '${status.count} deposits',
-                                ))
-                            .toList(),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTrendsSection(BuildContext context, List<MonthlyTrend> trends) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Portfolio Growth Trend',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 16),
-            MonthlyTrendChart(trends: trends, height: 250),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMaturitySection(
-      BuildContext context, List<MaturityTimeline> timeline) {
-    if (timeline.isEmpty) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              Text(
-                'Upcoming Maturities',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'No deposits maturing in the next 12 months',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Colors.grey,
-                    ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Upcoming Maturities',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 16),
-            ...timeline.take(5).map((maturity) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 60,
-                        padding: const EdgeInsets.symmetric(
-                            vertical: 4, horizontal: 8),
-                        decoration: BoxDecoration(
-                          color:
-                              Theme.of(context).primaryColor.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '${maturity.month.month}/${maturity.month.year.toString().substring(2)}',
-                          style:
-                              Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${maturity.count} deposits maturing',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium
-                                  ?.copyWith(
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                            ),
-                            Text(
-                              '₹${_formatAmount(maturity.amount)}',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
-                                  ?.copyWith(
-                                    color: Colors.grey[600],
-                                  ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                )),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopPerformersSection(
-      BuildContext context, List<TopPerformer> performers) {
-    if (performers.isEmpty) return const SizedBox.shrink();
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Top Performers',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 16),
-            ...performers.map((performer) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _getPerformerIcon(performer.metric),
-                        color: Theme.of(context).primaryColor,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          performer.title,
-                          style:
-                              Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                        ),
-                      ),
-                      Text(
-                        performer.displayValue,
-                        style:
-                            Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                  color: Theme.of(context).primaryColor,
-                                ),
-                      ),
-                    ],
-                  ),
-                )),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _formatAmount(double amount) {
-    if (amount >= 10000000) {
-      return '${(amount / 10000000).toStringAsFixed(1)}Cr';
-    } else if (amount >= 100000) {
-      return '${(amount / 100000).toStringAsFixed(1)}L';
-    } else if (amount >= 1000) {
-      return '${(amount / 1000).toStringAsFixed(1)}K';
-    } else {
-      return amount.toStringAsFixed(0);
-    }
-  }
-
-  Color _getRiskColor(String riskLevel) {
-    switch (riskLevel.toLowerCase()) {
-      case 'low':
-        return Colors.green;
-      case 'medium':
-        return Colors.orange;
-      case 'high':
-        return Colors.red;
-      case 'very high':
-        return Colors.red[800]!;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  String _getStatusLabel(DepositStatus status) {
-    switch (status) {
-      case DepositStatus.active:
-        return 'Active';
-      case DepositStatus.matured:
-        return 'Matured';
-      case DepositStatus.closed:
-        return 'Closed';
-      case DepositStatus.inProcess:
-        return 'In Process';
-    }
-  }
-
-  IconData _getPerformerIcon(String metric) {
-    switch (metric) {
-      case 'interest_rate':
-        return Icons.percent;
-      case 'amount':
-        return Icons.monetization_on;
-      case 'maturity_amount':
-        return Icons.account_balance_wallet;
-      default:
-        return Icons.star;
-    }
   }
 }

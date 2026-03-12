@@ -109,6 +109,20 @@ A Flutter + Firebase app for digitizing and managing fixed/recurring deposits wi
 - [x] Added automatic deposit form pre-filling from OCR results
 - [x] Fixed OCR navigation issues and removed GoRouter dependencies
 - [x] Created comprehensive error handling for OCR processing
+- [x] **PERFORMANCE & UI REVAMP** - Optimized all major screens with Slivers and CustomScrollView
+- [x] Refactored DashboardPage with premium glassmorphism design and reactive portfolio summary
+- [x] Overhauled LineagePage and ChainDetailsPage for smooth scrolling in long chains
+- [x] Revamped AnalyticsDashboard with modern charts and data masking
+- [x] Refactored MaturedDepositPage for better user guidance and action flow
+- [x] **DATABASE REDESIGN & REINVESTMENT FIX** - Simplified architecture and fixed broken flows
+- [x] Refactored HiveLineageRepository to use Deposit fields directly, removing redundant boxes
+- [x] Fixed Reinvestment linking logic in DepositFormPage and LineageRepository
+- [x] Unified deposit state tracking via Domain entities for better consistency
+- [x] **FEATURE ENHANCEMENTS**
+- [x] Implemented fully functional Deposit Search with integrated delegate
+- [x] Added native Delete functionality with proper provider invalidation
+- [x] Fixed Analytics lag and reactivity issues
+- [x] Cleaned up 50+ lint errors and resolved redundant repository logic
 
 ### 🔄 In Progress
 - [ ] iOS deployment and distribution setup

@@ -16,16 +16,6 @@ class HiveBootstrap {
     // Init is already called in main, but safe to call again
     await Hive.initFlutter();
 
-    // Clear existing boxes if there are type conflicts
-    try {
-      await Hive.deleteBoxFromDisk(depositsBoxName);
-      await Hive.deleteBoxFromDisk(chainsBoxName);
-      await Hive.deleteBoxFromDisk(linksBoxName);
-      await Hive.deleteBoxFromDisk(notificationsBoxName);
-      await Hive.deleteBoxFromDisk(notificationPreferencesBoxName);
-    } catch (e) {
-      // Ignore errors if boxes don't exist
-    }
 
     if (!Hive.isAdapterRegistered(AttachmentHiveModel.typeId)) {
       Hive.registerAdapter(AttachmentHiveModelAdapter());

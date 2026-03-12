@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -14,52 +15,113 @@ class LineagePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final chainsAsync = ref.watch(chainsWithDepositsProvider);
     final orphanedDepositsAsync = ref.watch(orphanedDepositsProvider);
-    final depositsAsync = ref.watch(depositsListProvider);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Deposit Lineage'),
-        backgroundColor: Colors.green[700],
-        foregroundColor: Colors.white,
-        elevation: 0,
-      ),
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Colors.green[50]!,
-              Colors.white,
+      body: RefreshIndicator(
+        onRefresh: () async {
+          ref.invalidate(chainsWithDepositsProvider);
+          ref.invalidate(orphanedDepositsProvider);
+          ref.invalidate(depositsListProvider);
+        },
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverAppBar.large(
+              title: const Text('Deposit Lineage', style: TextStyle(fontWeight: FontWeight.bold)),
+              backgroundColor: Colors.green[800],
+              foregroundColor: Colors.white,
+              pinned: true,
+              stretch: true,
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildHeader(context, ref),
+                    const SizedBox(height: 24),
+                    _buildSectionHeader(context, 'Active Chains', Icons.account_tree, Colors.green),
+                  ],
+                ),
+              ),
+            ),
+              chainsAsync.when(
+                data: (chains) => chains.isEmpty
+                    ? SliverToBoxAdapter(child: _buildEmptyChainsWidget(context))
+                    : SliverPadding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        sliver: SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (context, index) => _buildChainCard(context, chains[index]),
+                            childCount: chains.length,
+                          ),
+                        ),
+                      ),
+                loading: () => const SliverToBoxAdapter(child: Center(child: CircularProgressIndicator())),
+                error: (e, st) => SliverToBoxAdapter(child: _ErrorWidget(error: e.toString())),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.all(16),
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate([
+                    const SizedBox(height: 24),
+                    _buildSectionHeader(context, 'Matured Deposits', Icons.schedule, Colors.orange),
+                    const SizedBox(height: 16),
+                  ]),
+                ),
+              ),
+              orphanedDepositsAsync.when(
+                data: (deposits) => deposits.isEmpty
+                    ? SliverToBoxAdapter(child: _buildEmptyMaturedWidget(context))
+                    : SliverPadding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        sliver: SliverToBoxAdapter(
+                          child: _buildMaturedContent(context, deposits),
+                        ),
+                      ),
+                loading: () => const SliverToBoxAdapter(child: SizedBox.shrink()),
+                error: (e, st) => SliverToBoxAdapter(child: _ErrorWidget(error: e.toString())),
+              ),
             ],
           ),
         ),
-        child: RefreshIndicator(
-          onRefresh: () async {
-            ref.invalidate(chainsWithDepositsProvider);
-            ref.invalidate(orphanedDepositsProvider);
-          },
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Header with stats
-                _buildHeader(context, ref),
-                const SizedBox(height: 24),
+    );
+  }
 
-                // Chain Visualization Section
-                _buildChainSection(context, ref, chainsAsync, depositsAsync),
-                const SizedBox(height: 24),
-
-                // Matured Deposits Section
-                _buildMaturedSection(context, orphanedDepositsAsync),
-              ],
-            ),
-          ),
+  Widget _buildSectionHeader(BuildContext context, String title, IconData icon, MaterialColor color) {
+    return Row(
+      children: [
+        Icon(icon, color: color[700], size: 24),
+        const SizedBox(width: 8),
+        Text(
+          title,
+          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                color: color[700],
+                fontWeight: FontWeight.bold,
+              ),
         ),
-      ),
+      ],
+    );
+  }
+
+  Widget _buildMaturedContent(BuildContext context, List<Deposit> deposits) {
+    final maturedDeposits = deposits.where((d) => d.isMatured).toList();
+    final requiringAction =
+        maturedDeposits.where((d) => d.requiresAction).toList();
+    final processed =
+        maturedDeposits.where((d) => d.isPartOfLineage).toList();
+
+    return Column(
+      children: [
+        if (requiringAction.isNotEmpty) ...[
+          _buildActionRequiredSection(context, requiringAction),
+          const SizedBox(height: 16),
+        ],
+        if (processed.isNotEmpty) ...[
+          _buildProcessedSection(context, processed),
+        ],
+      ],
     );
   }
 
@@ -129,104 +191,6 @@ class LineagePage extends ConsumerWidget {
     );
   }
 
-  Widget _buildChainSection(
-      BuildContext context,
-      WidgetRef ref,
-      AsyncValue<List<DepositChain>> chainsAsync,
-      AsyncValue<List<Deposit>> depositsAsync) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.account_tree, color: Colors.green[700], size: 24),
-            const SizedBox(width: 8),
-            Text(
-              'Deposit Chains',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: Colors.green[700],
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        chainsAsync.when(
-          data: (chains) {
-            print('🔍 Lineage Page - Chains data: ${chains.length} chains');
-            for (var chain in chains) {
-              print(
-                  'Chain: ${chain.name} (${chain.id}) - ${chain.depositIds.length} deposits');
-            }
-            if (chains.isEmpty) {
-              return _buildEmptyChainsWidget(context);
-            }
-            return depositsAsync.when(
-              data: (deposits) => _buildChainsList(context, chains),
-              loading: () => _buildLoadingWidget(),
-              error: (e, st) => _ErrorWidget(error: e.toString()),
-            );
-          },
-          loading: () => _buildLoadingWidget(),
-          error: (error, stack) {
-            print('❌ Lineage Page - Error loading chains: $error');
-            return _ErrorWidget(error: error.toString());
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildMaturedSection(
-      BuildContext context, AsyncValue<List<Deposit>> orphanedDepositsAsync) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.schedule, color: Colors.orange[700], size: 24),
-            const SizedBox(width: 8),
-            Text(
-              'Matured Deposits',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: Colors.orange[700],
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        orphanedDepositsAsync.when(
-          data: (deposits) {
-            final maturedDeposits = deposits.where((d) => d.isMatured).toList();
-            final requiringAction =
-                maturedDeposits.where((d) => d.requiresAction).toList();
-            final processed =
-                maturedDeposits.where((d) => d.isPartOfLineage).toList();
-
-            if (maturedDeposits.isEmpty) {
-              return _buildEmptyMaturedWidget(context);
-            }
-
-            return Column(
-              children: [
-                if (requiringAction.isNotEmpty) ...[
-                  _buildActionRequiredSection(context, requiringAction),
-                  const SizedBox(height: 16),
-                ],
-                if (processed.isNotEmpty) ...[
-                  _buildProcessedSection(context, processed),
-                ],
-              ],
-            );
-          },
-          loading: () => _buildLoadingWidget(),
-          error: (error, stack) => _ErrorWidget(error: error.toString()),
-        ),
-      ],
-    );
-  }
-
   Widget _buildEmptyChainsWidget(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(32),
@@ -267,17 +231,6 @@ class LineagePage extends ConsumerWidget {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildChainsList(BuildContext context, List<DepositChain> chains) {
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: chains.length,
-      itemBuilder: (context, index) {
-        return _buildChainCard(context, chains[index]);
-      },
     );
   }
 
@@ -564,12 +517,16 @@ class LineagePage extends ConsumerWidget {
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.bold,
                           ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                     Text(
                       '${deposit.holdersDisplay} • ₹${deposit.dueAmount.toStringAsFixed(0)}',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             color: Colors.grey[600],
                           ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
@@ -587,6 +544,8 @@ class LineagePage extends ConsumerWidget {
                     fontWeight: FontWeight.bold,
                     color: Colors.orange[700],
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
@@ -631,9 +590,13 @@ class LineagePage extends ConsumerWidget {
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Container(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final w =
+                constraints.maxWidth.isFinite ? constraints.maxWidth : 400.0;
+            final isNarrow = w < 520;
+
+            final leading = Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
                 color: statusColor.withOpacity(0.1),
@@ -644,36 +607,41 @@ class LineagePage extends ConsumerWidget {
                 color: statusColor,
                 size: 20,
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+            );
+
+            final body = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${deposit.bankName} - ${deposit.srNo}',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  '${deposit.holdersDisplay} • ₹${deposit.dueAmount.toStringAsFixed(0)}',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Colors.grey[600],
+                      ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (deposit.notes != null && deposit.notes!.isNotEmpty)
                   Text(
-                    '${deposit.bankName} - ${deposit.srNo}',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
+                    'Note: ${deposit.notes}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontStyle: FontStyle.italic,
+                          color: Colors.grey[500],
                         ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  Text(
-                    '${deposit.holdersDisplay} • ₹${deposit.dueAmount.toStringAsFixed(0)}',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Colors.grey[600],
-                        ),
-                  ),
-                  if (deposit.notes != null && deposit.notes!.isNotEmpty)
-                    Text(
-                      'Note: ${deposit.notes}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            fontStyle: FontStyle.italic,
-                            color: Colors.grey[500],
-                          ),
-                    ),
-                ],
-              ),
-            ),
-            Container(
+              ],
+            );
+
+            final statusChip = Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: statusColor.withOpacity(0.1),
@@ -686,15 +654,52 @@ class LineagePage extends ConsumerWidget {
                   fontWeight: FontWeight.bold,
                   color: statusColor,
                 ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-            ),
-            const SizedBox(width: 8),
-            TextButton.icon(
+            );
+
+            final viewChain = TextButton.icon(
               onPressed: () => _openChainForDeposit(context, deposit),
               icon: const Icon(Icons.account_tree),
               label: const Text('View Chain'),
-            ),
-          ],
+            );
+
+            if (isNarrow) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      leading,
+                      const SizedBox(width: 12),
+                      Expanded(child: body),
+                      const SizedBox(width: 8),
+                      statusChip,
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: viewChain,
+                  ),
+                ],
+              );
+            }
+
+            return Row(
+              children: [
+                leading,
+                const SizedBox(width: 12),
+                Expanded(child: body),
+                const SizedBox(width: 8),
+                statusChip,
+                const SizedBox(width: 8),
+                viewChain,
+              ],
+            );
+          },
         ),
       ),
     );
@@ -770,10 +775,6 @@ class LineagePage extends ConsumerWidget {
     );
   }
 
-  Widget _buildLoadingWidget() {
-    return const Center(child: CircularProgressIndicator());
-  }
-
   void _viewChainDetails(BuildContext context, DepositChain chain) {
     context.push('/chain/${chain.id}');
   }
@@ -784,7 +785,7 @@ class LineagePage extends ConsumerWidget {
 
   Future<void> _testChainCreation(BuildContext context, WidgetRef ref) async {
     try {
-      print('🧪 Testing chain creation...');
+      if (kDebugMode) debugPrint('Testing chain creation...');
       final lineageRepo = ref.read(lineageRepositoryProvider);
 
       // Create a test chain
@@ -793,7 +794,9 @@ class LineagePage extends ConsumerWidget {
         description: 'Test chain created for debugging',
       );
 
-      print('✅ Test chain created: ${chain.name} (${chain.id})');
+      if (kDebugMode) {
+        debugPrint('Test chain created: ${chain.name} (${chain.id})');
+      }
 
       // Refresh the providers
       ref.invalidate(chainsWithDepositsProvider);
@@ -807,11 +810,11 @@ class LineagePage extends ConsumerWidget {
         );
       }
     } catch (e) {
-      print('❌ Test chain creation failed: $e');
+      if (kDebugMode) debugPrint('Error testing chain creation: $e');
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Test failed: $e'),
+            content: Text('Error: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -829,17 +832,18 @@ class _ErrorWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.red[50],
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.red[200]!),
       ),
       child: Column(
         children: [
-          Icon(Icons.error_outline, color: Colors.red[600], size: 32),
+          const Icon(Icons.error_outline, color: Colors.red, size: 48),
           const SizedBox(height: 8),
           Text(
-            'Error loading data',
+            'Error Loading Data',
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   color: Colors.red[700],
                   fontWeight: FontWeight.bold,
@@ -848,10 +852,18 @@ class _ErrorWidget extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             error,
+            textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: Colors.red[600],
                 ),
-            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton(
+            onPressed: () {
+              // Re-run providers
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Retry'),
           ),
         ],
       ),

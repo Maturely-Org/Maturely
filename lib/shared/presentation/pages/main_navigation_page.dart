@@ -7,6 +7,8 @@ import '../../../features/deposits/presentation/pages/lineage_page.dart';
 import '../../../features/ocr/presentation/pages/ocr_capture_page.dart';
 import '../../../features/analytics/presentation/pages/analytics_dashboard.dart';
 import '../../../features/auth/presentation/providers/auth_providers.dart';
+import '../../../features/settings/presentation/providers/settings_provider.dart';
+import '../../../features/deposits/presentation/widgets/deposit_search_delegate.dart';
 
 class MainNavigationPage extends ConsumerStatefulWidget {
   const MainNavigationPage({super.key});
@@ -79,12 +81,27 @@ class _MainNavigationPageState extends ConsumerState<MainNavigationPage> {
         shadowColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,
         actions: [
+          // Masking toggle
+          Consumer(
+            builder: (context, ref, child) {
+              final maskEnabled = ref.watch(settingsProvider).maskSensitiveData;
+              return IconButton(
+                icon: Icon(
+                  maskEnabled ? Icons.visibility_off : Icons.visibility,
+                  color: maskEnabled ? Colors.orange : null,
+                ),
+                onPressed: () => ref.read(settingsProvider.notifier).toggleMasking(),
+                tooltip: maskEnabled ? 'Unhide sensitive data' : 'Hide sensitive data',
+              );
+            },
+          ),
           // Search action
           IconButton(
             icon: const Icon(Icons.search),
             onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Search feature coming soon')),
+              showSearch(
+                context: context,
+                delegate: DepositSearchDelegate(ref),
               );
             },
             tooltip: 'Search deposits',

@@ -12,23 +12,10 @@ class HiveLineageRepository implements LineageRepository {
   final Uuid _uuid = const Uuid();
 
   Box<DepositChainHiveModel> get _chainsBox {
-    if (!Hive.isBoxOpen(HiveBootstrap.chainsBoxName)) {
-      throw Exception('Chains box not opened. Please restart the app.');
-    }
     return Hive.box<DepositChainHiveModel>(HiveBootstrap.chainsBoxName);
   }
 
-  Box<ChainLinkHiveModel> get _linksBox {
-    if (!Hive.isBoxOpen(HiveBootstrap.linksBoxName)) {
-      throw Exception('Links box not opened. Please restart the app.');
-    }
-    return Hive.box<ChainLinkHiveModel>(HiveBootstrap.linksBoxName);
-  }
-
   Box<DepositHiveModel> get _depositsBox {
-    if (!Hive.isBoxOpen(HiveBootstrap.depositsBoxName)) {
-      throw Exception('Deposits box not opened. Please restart the app.');
-    }
     return Hive.box<DepositHiveModel>(HiveBootstrap.depositsBoxName);
   }
 
@@ -37,10 +24,8 @@ class HiveLineageRepository implements LineageRepository {
     required String name,
     String? description,
   }) async {
-    print('🏗️ createChain called - Name: $name');
     final chainId = _uuid.v4();
     final now = DateTime.now();
-    print('Generated chain ID: $chainId');
 
     final chain = DepositChainHiveModel(
       id: chainId,
@@ -55,13 +40,8 @@ class HiveLineageRepository implements LineageRepository {
       status: ChainStatus.active.index,
     );
 
-    print('Saving chain to Hive box...');
     await _chainsBox.put(chainId, chain);
-    print('✅ Chain saved to Hive box');
-
-    final domainChain = _toDomainChain(chain);
-    print('✅ Domain chain created: ${domainChain.name} (${domainChain.id})');
-    return domainChain;
+    return _toDomainChain(chain);
   }
 
   @override
@@ -84,22 +64,17 @@ class HiveLineageRepository implements LineageRepository {
 
   @override
   Future<void> deleteChain(String chainId) async {
-    await _chainsBox.delete(chainId);
-    // Also delete all links for this chain
-    final links = _linksBox.values
-        .where((link) =>
-            _chainsBox
-                    .get(chainId)
-                    ?.depositIds
-                    .contains(link.parentDepositId) ==
-                true ||
-            _chainsBox.get(chainId)?.depositIds.contains(link.childDepositId) ==
-                true)
-        .toList();
-
-    for (final link in links) {
-      await _linksBox.delete('${link.parentDepositId}_${link.childDepositId}');
+    // Clear chainId from all deposits first
+    final chain = _chainsBox.get(chainId);
+    if (chain != null) {
+      for (final depositId in chain.depositIds) {
+        final d = _depositsBox.get(depositId);
+        if (d != null) {
+          await _depositsBox.put(depositId, d.copyWith(chainId: null));
+        }
+      }
     }
+    await _chainsBox.delete(chainId);
   }
 
   @override
@@ -109,87 +84,114 @@ class HiveLineageRepository implements LineageRepository {
     required double reinvestedAmount,
     String? notes,
   }) async {
-    final linkId = '${parentDepositId}_$childDepositId';
-    final now = DateTime.now();
+    // We use the Deposit object fields as the source of truth now
+    final parent = _depositsBox.get(parentDepositId);
+    final child = _depositsBox.get(childDepositId);
 
-    final link = ChainLinkHiveModel(
+    if (parent != null && child != null) {
+      final updatedParent = parent.copyWith(
+        nextDepositId: childDepositId,
+        closureType: 'reinvested', // Domain value
+        status: 'closed',
+      );
+      final updatedChild = child.copyWith(
+        previousDepositId: parentDepositId,
+        chainId: parent.chainId ?? parent.id, // Inheritance
+      );
+      await _depositsBox.put(parentDepositId, updatedParent);
+      await _depositsBox.put(childDepositId, updatedChild);
+      
+      if (updatedChild.chainId != null) {
+        await _updateChainStatistics(updatedChild.chainId!);
+      }
+    }
+
+    return ChainLink(
       parentDepositId: parentDepositId,
       childDepositId: childDepositId,
-      linkedAt: now,
+      linkedAt: DateTime.now(),
       reinvestedAmount: reinvestedAmount,
       notes: notes,
     );
-
-    await _linksBox.put(linkId, link);
-
-    // Update the chain statistics
-    await _updateChainStatistics(parentDepositId);
-    await _updateChainStatistics(childDepositId);
-
-    return _toDomainLink(link);
   }
 
   @override
-  Future<void> unlinkDeposits(
-      String parentDepositId, String childDepositId) async {
-    final linkId = '${parentDepositId}_$childDepositId';
-    await _linksBox.delete(linkId);
+  Future<void> unlinkDeposits(String parentDepositId, String childDepositId) async {
+    final parent = _depositsBox.get(parentDepositId);
+    final child = _depositsBox.get(childDepositId);
 
-    // Update chain statistics
-    await _updateChainStatistics(parentDepositId);
-    await _updateChainStatistics(childDepositId);
+    if (parent != null) {
+      await _depositsBox.put(parentDepositId, parent.copyWith(nextDepositId: null));
+    }
+    if (child != null) {
+      await _depositsBox.put(childDepositId, child.copyWith(previousDepositId: null));
+    }
   }
 
   @override
   Future<List<ChainLink>> getDepositLinks(String depositId) async {
-    return _linksBox.values
-        .where((link) =>
-            link.parentDepositId == depositId ||
-            link.childDepositId == depositId)
-        .map(_toDomainLink)
-        .toList();
+    // Return mock links derived from sequence fields
+    final links = <ChainLink>[];
+    final d = _depositsBox.get(depositId);
+    if (d == null) return links;
+
+    if (d.previousDepositId != null) {
+      links.add(ChainLink(
+        parentDepositId: d.previousDepositId!,
+        childDepositId: depositId,
+        linkedAt: d.createdAt,
+        reinvestedAmount: d.amountDeposited,
+      ));
+    }
+    if (d.nextDepositId != null) {
+      final child = _depositsBox.get(d.nextDepositId!);
+      if (child != null) {
+        links.add(ChainLink(
+          parentDepositId: depositId,
+          childDepositId: d.nextDepositId!,
+          linkedAt: child.createdAt,
+          reinvestedAmount: child.amountDeposited,
+        ));
+      }
+    }
+    return links;
   }
 
   @override
   Future<DepositChain?> getDepositChain(String depositId) async {
-    for (final chain in _chainsBox.values) {
-      if (chain.depositIds.contains(depositId)) {
-        return _toDomainChain(chain);
-      }
+    final deposit = _depositsBox.get(depositId);
+    if (deposit != null && deposit.chainId != null) {
+      final chain = _chainsBox.get(deposit.chainId);
+      if (chain != null) return _toDomainChain(chain);
     }
     return null;
   }
 
   @override
   Future<List<Deposit>> getDepositLineage(String depositId) async {
-    final visited = <String>{};
     final lineage = <Deposit>[];
-
-    await _collectLineage(depositId, visited, lineage);
-
+    final visited = <String>{};
+    
+    // Find the head of the chain
+    String? currentId = depositId;
+    while (currentId != null && !visited.contains(currentId)) {
+      visited.add(currentId);
+      final d = _depositsBox.get(currentId);
+      if (d == null || d.previousDepositId == null) break;
+      currentId = d.previousDepositId;
+    }
+    
+    // Follow the chain down
+    visited.clear();
+    while (currentId != null && !visited.contains(currentId)) {
+      visited.add(currentId);
+      final d = _depositsBox.get(currentId);
+      if (d == null) break;
+      lineage.add(_toDomainDeposit(d));
+      currentId = d.nextDepositId;
+    }
+    
     return lineage;
-  }
-
-  Future<void> _collectLineage(
-      String depositId, Set<String> visited, List<Deposit> lineage) async {
-    if (visited.contains(depositId)) return;
-    visited.add(depositId);
-
-    final deposit = _depositsBox.get(depositId);
-    if (deposit != null) {
-      lineage.add(_toDomainDeposit(deposit));
-    }
-
-    // Find parent and child deposits
-    final links = _linksBox.values.where((link) =>
-        link.parentDepositId == depositId || link.childDepositId == depositId);
-
-    for (final link in links) {
-      final relatedDepositId = link.parentDepositId == depositId
-          ? link.childDepositId
-          : link.parentDepositId;
-      await _collectLineage(relatedDepositId, visited, lineage);
-    }
   }
 
   @override
@@ -203,325 +205,188 @@ class HiveLineageRepository implements LineageRepository {
         .cast<DepositHiveModel>()
         .toList();
 
-    final totalAmount =
-        deposits.fold(0.0, (sum, deposit) => sum + deposit.amountDeposited);
-    final currentValue =
-        deposits.fold(0.0, (sum, deposit) => sum + deposit.dueAmount);
-    // DepositHiveModel.status is stored as a String (e.g., 'active', 'matured')
-    final activeDeposits =
-        deposits.where((d) => d.status == DepositStatus.active.name).length;
-    final maturedDeposits =
-        deposits.where((d) => d.status == DepositStatus.matured.name).length;
+    final totalAmount = deposits.fold(0.0, (sum, d) => sum + d.amountDeposited);
+    final currentValue = deposits.fold(0.0, (sum, d) => sum + d.dueAmount);
 
     return {
       'totalDeposits': deposits.length,
       'totalAmount': totalAmount,
       'currentValue': currentValue,
-      'activeDeposits': activeDeposits,
-      'maturedDeposits': maturedDeposits,
-      'averageAmount':
-          deposits.isNotEmpty ? totalAmount / deposits.length : 0.0,
+      'activeDeposits': deposits.where((d) => d.status == 'active').length,
+      'maturedDeposits': deposits.where((d) => d.status == 'matured').length,
     };
   }
 
   @override
   Future<List<DepositChain>> getChainsWithDeposits() async {
-    print('🔍 getChainsWithDeposits called');
-    final allChains = _chainsBox.values.toList();
-    print('Total chains in box: ${allChains.length}');
-
-    for (var chain in allChains) {
-      print('Chain: ${chain.name} - Deposit IDs: ${chain.depositIds}');
-    }
-
-    final chainsWithDeposits = allChains.map(_toDomainChain).toList();
-
-    print('Chains with deposits: ${chainsWithDeposits.length}');
-    return chainsWithDeposits;
+    return _chainsBox.values.map(_toDomainChain).toList();
   }
 
   @override
-  Future<DepositChain> addDepositToChain(
-      String chainId, String depositId) async {
-    print('🔗 addDepositToChain called - Chain: $chainId, Deposit: $depositId');
+  Future<DepositChain> addDepositToChain(String chainId, String depositId) async {
     final chain = _chainsBox.get(chainId);
-    if (chain == null) {
-      print('❌ Chain not found: $chainId');
-      throw Exception('Chain not found');
-    }
+    final deposit = _depositsBox.get(depositId);
+    if (chain == null || deposit == null) throw Exception('Not found');
 
-    print('Current chain deposit IDs: ${chain.depositIds}');
-    final updatedDepositIds = List<String>.from(chain.depositIds);
-    if (!updatedDepositIds.contains(depositId)) {
-      updatedDepositIds.add(depositId);
-      print('✅ Added deposit $depositId to chain');
-    } else {
-      print('⚠️ Deposit $depositId already in chain');
-    }
+    final ids = List<String>.from(chain.depositIds);
+    if (!ids.contains(depositId)) ids.add(depositId);
 
-    final updatedChain = DepositChainHiveModel(
-      id: chain.id,
-      name: chain.name,
-      createdAt: chain.createdAt,
-      updatedAt: DateTime.now(),
-      description: chain.description,
-      depositIds: updatedDepositIds,
-      totalDeposits: updatedDepositIds.length,
-      totalAmount: chain.totalAmount,
-      currentValue: chain.currentValue,
-      status: chain.status,
-    );
-
-    await _chainsBox.put(chainId, updatedChain);
+    await _chainsBox.put(chainId, chain.copyWith(depositIds: ids));
+    await _depositsBox.put(depositId, deposit.copyWith(chainId: chainId));
     await _updateChainStatistics(chainId);
-    print('✅ Chain updated in Hive box');
 
-    return _toDomainChain(updatedChain);
+    return _toDomainChain(_chainsBox.get(chainId)!);
   }
 
   @override
-  Future<DepositChain> removeDepositFromChain(
-      String chainId, String depositId) async {
+  Future<DepositChain> removeDepositFromChain(String chainId, String depositId) async {
     final chain = _chainsBox.get(chainId);
     if (chain == null) throw Exception('Chain not found');
 
-    final updatedDepositIds = List<String>.from(chain.depositIds);
-    updatedDepositIds.remove(depositId);
+    final ids = List<String>.from(chain.depositIds);
+    ids.remove(depositId);
 
-    final updatedChain = DepositChainHiveModel(
-      id: chain.id,
-      name: chain.name,
-      createdAt: chain.createdAt,
-      updatedAt: DateTime.now(),
-      description: chain.description,
-      depositIds: updatedDepositIds,
-      totalDeposits: updatedDepositIds.length,
-      totalAmount: chain.totalAmount,
-      currentValue: chain.currentValue,
-      status: chain.status,
-    );
-
-    await _chainsBox.put(chainId, updatedChain);
+    await _chainsBox.put(chainId, chain.copyWith(depositIds: ids));
+    final deposit = _depositsBox.get(depositId);
+    if (deposit != null) {
+      await _depositsBox.put(depositId, deposit.copyWith(chainId: null));
+    }
     await _updateChainStatistics(chainId);
 
-    return _toDomainChain(updatedChain);
+    return _toDomainChain(_chainsBox.get(chainId)!);
   }
 
   @override
   Future<List<Deposit>> getOrphanedDeposits() async {
-    final allDepositIds = _depositsBox.keys.cast<String>().toSet();
-    final chainedDepositIds = <String>{};
-
-    for (final chain in _chainsBox.values) {
-      chainedDepositIds.addAll(chain.depositIds);
-    }
-
-    final orphanedIds = allDepositIds.difference(chainedDepositIds);
-
-    return orphanedIds
-        .map((id) => _depositsBox.get(id))
-        .where((deposit) => deposit != null)
-        .map((deposit) => _toDomainDeposit(deposit!))
+    return _depositsBox.values
+        .where((d) => d.chainId == null)
+        .map(_toDomainDeposit)
         .toList();
   }
 
   @override
-  Future<DepositChain> mergeChains(
-      String sourceChainId, String targetChainId) async {
-    final sourceChain = _chainsBox.get(sourceChainId);
-    final targetChain = _chainsBox.get(targetChainId);
+  Future<DepositChain> mergeChains(String sourceId, String targetId) async {
+    final s = _chainsBox.get(sourceId);
+    final t = _chainsBox.get(targetId);
+    if (s == null || t == null) throw Exception('Not found');
 
-    if (sourceChain == null || targetChain == null) {
-      throw Exception('One or both chains not found');
+    final mergedIds = (List<String>.from(t.depositIds)..addAll(s.depositIds)).toSet().toList();
+    
+    for (final id in s.depositIds) {
+      final d = _depositsBox.get(id);
+      if (d != null) await _depositsBox.put(id, d.copyWith(chainId: targetId));
     }
 
-    final mergedDepositIds = List<String>.from(targetChain.depositIds);
-    mergedDepositIds.addAll(sourceChain.depositIds);
+    await _chainsBox.put(targetId, t.copyWith(depositIds: mergedIds));
+    await _chainsBox.delete(sourceId);
+    await _updateChainStatistics(targetId);
 
-    final mergedChain = DepositChainHiveModel(
-      id: targetChainId,
-      name: targetChain.name,
-      createdAt: targetChain.createdAt,
-      updatedAt: DateTime.now(),
-      description: targetChain.description,
-      depositIds: mergedDepositIds,
-      totalDeposits: mergedDepositIds.length,
-      totalAmount: targetChain.totalAmount + sourceChain.totalAmount,
-      currentValue: targetChain.currentValue + sourceChain.currentValue,
-      status: targetChain.status,
-    );
-
-    await _chainsBox.put(targetChainId, mergedChain);
-    await _chainsBox.delete(sourceChainId);
-    await _updateChainStatistics(targetChainId);
-
-    return _toDomainChain(mergedChain);
+    return _toDomainChain(_chainsBox.get(targetId)!);
   }
 
   @override
-  Future<List<DepositChain>> splitChain(
-      String chainId, String splitAtDepositId) async {
+  Future<List<DepositChain>> splitChain(String chainId, String splitAtId) async {
     final chain = _chainsBox.get(chainId);
-    if (chain == null) throw Exception('Chain not found');
+    if (chain == null) throw Exception('Not found');
 
-    final splitIndex = chain.depositIds.indexOf(splitAtDepositId);
-    if (splitIndex == -1) throw Exception('Deposit not found in chain');
+    final index = chain.depositIds.indexOf(splitAtId);
+    if (index == -1) throw Exception('Id not in chain');
 
-    final firstPartIds = chain.depositIds.sublist(0, splitIndex + 1);
-    final secondPartIds = chain.depositIds.sublist(splitIndex + 1);
+    final ids1 = chain.depositIds.sublist(0, index + 1);
+    final ids2 = chain.depositIds.sublist(index + 1);
 
-    // Create first chain (original)
-    final firstChain = DepositChainHiveModel(
-      id: chainId,
-      name: chain.name,
-      createdAt: chain.createdAt,
-      updatedAt: DateTime.now(),
-      description: chain.description,
-      depositIds: firstPartIds,
-      totalDeposits: firstPartIds.length,
-      totalAmount: chain.totalAmount,
-      currentValue: chain.currentValue,
-      status: chain.status,
-    );
-
-    // Create second chain (new)
-    final secondChainId = _uuid.v4();
-    final secondChain = DepositChainHiveModel(
-      id: secondChainId,
+    final chain2Id = _uuid.v4();
+    final chain2 = DepositChainHiveModel(
+      id: chain2Id,
       name: '${chain.name} (Split)',
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
-      description: 'Split from ${chain.name}',
-      depositIds: secondPartIds,
-      totalDeposits: secondPartIds.length,
+      depositIds: ids2,
+      totalDeposits: ids2.length,
       totalAmount: 0.0,
       currentValue: 0.0,
       status: ChainStatus.active.index,
     );
 
-    await _chainsBox.put(chainId, firstChain);
-    await _chainsBox.put(secondChainId, secondChain);
+    await _chainsBox.put(chainId, chain.copyWith(depositIds: ids1));
+    await _chainsBox.put(chain2Id, chain2);
+
+    for (final id in ids2) {
+      final d = _depositsBox.get(id);
+      if (d != null) await _depositsBox.put(id, d.copyWith(chainId: chain2Id));
+    }
 
     await _updateChainStatistics(chainId);
-    await _updateChainStatistics(secondChainId);
+    await _updateChainStatistics(chain2Id);
 
-    return [_toDomainChain(firstChain), _toDomainChain(secondChain)];
+    return [_toDomainChain(chain), _toDomainChain(chain2)];
   }
 
-  Future<void> _updateChainStatistics(String depositId) async {
-    final chain = await getDepositChain(depositId);
+  Future<void> _updateChainStatistics(String chainId) async {
+    final chain = _chainsBox.get(chainId);
     if (chain == null) return;
 
     final deposits = chain.depositIds
         .map((id) => _depositsBox.get(id))
-        .where((deposit) => deposit != null)
-        .cast<DepositHiveModel>()
-        .toList();
+        .where((d) => d != null)
+        .cast<DepositHiveModel>();
 
-    final totalAmount =
-        deposits.fold(0.0, (sum, deposit) => sum + deposit.amountDeposited);
-    final currentValue =
-        deposits.fold(0.0, (sum, deposit) => sum + deposit.dueAmount);
+    final total = deposits.fold(0.0, (s, d) => s + d.amountDeposited);
+    final current = deposits.fold(0.0, (s, d) => s + d.dueAmount);
 
-    final updatedChain = DepositChainHiveModel(
-      id: chain.id,
-      name: chain.name,
-      createdAt: chain.createdAt,
-      updatedAt: DateTime.now(),
-      description: chain.description,
-      depositIds: chain.depositIds,
+    await _chainsBox.put(chainId, chain.copyWith(
       totalDeposits: deposits.length,
-      totalAmount: totalAmount,
-      currentValue: currentValue,
-      status: chain.status.index,
-    );
-
-    await _chainsBox.put(chain.id, updatedChain);
+      totalAmount: total,
+      currentValue: current,
+      updatedAt: DateTime.now(),
+    ));
   }
 
-  // Conversion methods
-  DepositChain _toDomainChain(DepositChainHiveModel hive) {
-    print('🔄 Converting Hive chain to domain: ${hive.name} (${hive.id})');
-    print('Hive status: ${hive.status}, Deposit IDs: ${hive.depositIds}');
-    return DepositChain(
-      id: hive.id,
-      name: hive.name,
-      createdAt: hive.createdAt,
-      updatedAt: hive.updatedAt,
-      description: hive.description,
-      depositIds: List.from(hive.depositIds),
-      totalDeposits: hive.totalDeposits,
-      totalAmount: hive.totalAmount,
-      currentValue: hive.currentValue,
-      status: ChainStatus.values[hive.status],
-    );
-  }
+  DepositChain _toDomainChain(DepositChainHiveModel h) => DepositChain(
+        id: h.id,
+        name: h.name,
+        createdAt: h.createdAt,
+        updatedAt: h.updatedAt,
+        description: h.description,
+        depositIds: List.from(h.depositIds),
+        totalDeposits: h.totalDeposits,
+        totalAmount: h.totalAmount,
+        currentValue: h.currentValue,
+        status: ChainStatus.values[h.status],
+      );
 
-  DepositChainHiveModel _toHiveChain(DepositChain domain) {
-    return DepositChainHiveModel(
-      id: domain.id,
-      name: domain.name,
-      createdAt: domain.createdAt,
-      updatedAt: domain.updatedAt,
-      description: domain.description,
-      depositIds: List.from(domain.depositIds),
-      totalDeposits: domain.totalDeposits,
-      totalAmount: domain.totalAmount,
-      currentValue: domain.currentValue,
-      status: domain.status.index,
-    );
-  }
+  DepositChainHiveModel _toHiveChain(DepositChain d) => DepositChainHiveModel(
+        id: d.id,
+        name: d.name,
+        createdAt: d.createdAt,
+        updatedAt: d.updatedAt,
+        description: d.description,
+        depositIds: List.from(d.depositIds),
+        totalDeposits: d.totalDeposits,
+        totalAmount: d.totalAmount,
+        currentValue: d.currentValue,
+        status: d.status.index,
+      );
 
-  ChainLink _toDomainLink(ChainLinkHiveModel hive) {
-    return ChainLink(
-      parentDepositId: hive.parentDepositId,
-      childDepositId: hive.childDepositId,
-      linkedAt: hive.linkedAt,
-      reinvestedAmount: hive.reinvestedAmount,
-      notes: hive.notes,
-    );
-  }
-
-  Deposit _toDomainDeposit(DepositHiveModel hive) {
-    return Deposit(
-      id: hive.id,
-      srNo: hive.srNo,
-      holders: hive.holders,
-      bankName: hive.bankName,
-      accountNumber: hive.accountNumber,
-      fdrNo: hive.fdrNo,
-      amountDeposited: hive.amountDeposited,
-      dueAmount: hive.dueAmount,
-      dateDeposited: hive.dateDeposited,
-      dueDate: hive.dueDate,
-      status: DepositStatus.values.firstWhere(
-        (e) => e.name == hive.status,
-        orElse: () => DepositStatus.active,
-      ),
-      closureType: hive.closureType != null
-          ? ClosureType.values.firstWhere(
-              (e) => e.name == hive.closureType!,
-              orElse: () => ClosureType.unknown,
-            )
-          : null,
-      previousDepositId: hive.previousDepositId,
-      nextDepositId: hive.nextDepositId,
-      chainId: hive.chainId,
-      createdAt: hive.createdAt,
-      updatedAt: hive.updatedAt,
-      notes: hive.notes,
-      attachments: hive.attachments
-          .map((a) => Attachment(
-                id: a.id,
-                storagePath: a.storagePath,
-                kind: AttachmentKind.values.firstWhere(
-                  (e) => e.name == a.kind,
-                  orElse: () => AttachmentKind.other,
-                ),
-                ocrVersion: a.ocrVersion,
-                fieldsExtracted: a.fieldsExtracted,
-              ))
-          .toList(),
-    );
-  }
+  Deposit _toDomainDeposit(DepositHiveModel h) => Deposit(
+        id: h.id,
+        srNo: h.srNo,
+        holders: h.holders,
+        bankName: h.bankName,
+        accountNumber: h.accountNumber,
+        fdrNo: h.fdrNo,
+        amountDeposited: h.amountDeposited,
+        dueAmount: h.dueAmount,
+        dateDeposited: h.dateDeposited,
+        dueDate: h.dueDate,
+        status: DepositStatus.values.firstWhere((e) => e.name == h.status, orElse: () => DepositStatus.active),
+        closureType: h.closureType == null ? null : ClosureType.values.firstWhere((e) => e.name == h.closureType, orElse: () => ClosureType.unknown),
+        previousDepositId: h.previousDepositId,
+        nextDepositId: h.nextDepositId,
+        chainId: h.chainId,
+        createdAt: h.createdAt,
+        updatedAt: h.updatedAt,
+        notes: h.notes,
+        attachments: h.attachments.map((a) => Attachment(id: a.id, storagePath: a.storagePath, kind: AttachmentKind.values.firstWhere((e) => e.name == a.kind, orElse: () => AttachmentKind.other))).toList(),
+      );
 }

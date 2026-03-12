@@ -112,4 +112,48 @@ class DepositHiveModel extends HiveObject {
     this.notes,
     required this.attachments,
   });
+
+  DepositHiveModel copyWith({
+    String? id,
+    String? srNo,
+    List<String>? holders,
+    String? bankName,
+    String? accountNumber,
+    String? fdrNo,
+    double? amountDeposited,
+    double? dueAmount,
+    DateTime? dateDeposited,
+    DateTime? dueDate,
+    String? status,
+    String? closureType,
+    String? previousDepositId,
+    String? nextDepositId,
+    String? chainId,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    String? notes,
+    List<AttachmentHiveModel>? attachments,
+  }) {
+    return DepositHiveModel(
+      id: id ?? this.id,
+      srNo: srNo ?? this.srNo,
+      holders: holders ?? this.holders,
+      bankName: bankName ?? this.bankName,
+      accountNumber: accountNumber ?? this.accountNumber,
+      fdrNo: fdrNo ?? this.fdrNo,
+      amountDeposited: amountDeposited ?? this.amountDeposited,
+      dueAmount: dueAmount ?? this.dueAmount,
+      dateDeposited: dateDeposited ?? this.dateDeposited,
+      dueDate: dueDate ?? this.dueDate,
+      status: status ?? this.status,
+      closureType: closureType ?? this.closureType,
+      previousDepositId: previousDepositId ?? this.previousDepositId,
+      nextDepositId: nextDepositId ?? this.nextDepositId,
+      chainId: chainId ?? this.chainId,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      notes: notes ?? this.notes,
+      attachments: attachments ?? this.attachments,
+    );
+  }
 }

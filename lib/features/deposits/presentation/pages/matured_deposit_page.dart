@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../domain/entities/deposit.dart';
 import '../providers/deposit_providers.dart';
 import '../providers/lineage_providers.dart';
+import 'deposit_form_page.dart';
 
 class MaturedDepositPage extends ConsumerStatefulWidget {
   final String depositId;
@@ -89,250 +90,203 @@ class _MaturedDepositPageState extends ConsumerState<MaturedDepositPage> {
 
     // Check if deposit has already been processed
     if (!_deposit!.requiresAction) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Processed Deposit')),
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                _deposit!.closureType == ClosureType.reinvested
-                    ? Icons.repeat
-                    : _deposit!.closureType == ClosureType.withdrawn
-                        ? Icons.account_balance_wallet
-                        : Icons.check_circle,
-                size: 64,
-                color: _deposit!.closureType == ClosureType.reinvested
-                    ? Colors.green
-                    : _deposit!.closureType == ClosureType.withdrawn
-                        ? Colors.orange
-                        : Colors.grey,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                _deposit!.closureType == ClosureType.reinvested
-                    ? 'Reinvested'
-                    : _deposit!.closureType == ClosureType.withdrawn
-                        ? 'Withdrawn'
-                        : 'Closed',
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'This deposit has already been processed.',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Colors.grey[600],
-                    ),
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: () => context.pop(),
-                child: const Text('Go Back'),
-              ),
-            ],
-          ),
-        ),
-      );
+      return _buildProcessedView();
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Matured Deposit'),
-        actions: [
-          if (_deposit!.requiresAction)
-            IconButton(
-              icon: const Icon(Icons.edit),
-              onPressed: () => context.push('/deposit/edit/${_deposit!.id}'),
-              tooltip: 'Edit Deposit',
-            ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Deposit Info Card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        CircleAvatar(
-                          backgroundColor: Colors.blue,
-                          child: const Icon(Icons.check_circle,
-                              color: Colors.white),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '${_deposit!.srNo} • ${_deposit!.bankName}',
-                                style: Theme.of(context).textTheme.titleLarge,
-                              ),
-                              Text(
-                                _deposit!.holdersDisplay,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodyLarge
-                                    ?.copyWith(
-                                      color: Colors.grey[600],
-                                    ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.blue[100],
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            'MATURED',
-                            style: TextStyle(
-                              color: Colors.blue[700],
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ],
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar.large(
+            title: const Text('Matured Deposit'),
+            pinned: true,
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.edit_outlined),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => DepositFormPage(depositId: _deposit!.id),
                     ),
-                    const SizedBox(height: 16),
-                    _buildInfoRow('Account Number', _deposit!.accountNumber),
-                    _buildInfoRow('FDR Number', _deposit!.fdrNo),
-                    _buildInfoRow('Amount Deposited',
-                        '₹${_deposit!.amountDeposited.toStringAsFixed(2)}'),
-                    _buildInfoRow('Due Amount',
-                        '₹${_deposit!.dueAmount.toStringAsFixed(2)}'),
-                    _buildInfoRow('Interest Earned',
-                        '₹${_deposit!.interestAmount.toStringAsFixed(2)}'),
-                    _buildInfoRow('Interest Rate',
-                        '${_deposit!.interestRate.toStringAsFixed(2)}%'),
-                    _buildInfoRow(
-                        'Date Deposited', _formatDate(_deposit!.dateDeposited)),
-                    _buildInfoRow(
-                        'Maturity Date', _formatDate(_deposit!.dueDate)),
-                    _buildInfoRow('Maturity Period',
-                        '${_deposit!.maturityPeriodDays} days'),
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 24),
-
-            // Action Required Section
-            Text(
-              'Action Required',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'This deposit has matured. What would you like to do with the matured amount?',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.grey[600],
-                  ),
-            ),
-            const SizedBox(height: 16),
-
-            // Action Buttons
-            _buildActionButton(
-              icon: Icons.repeat,
-              title: 'Reinvest',
-              subtitle: 'Use this amount to create a new deposit',
-              color: Colors.green,
-              onTap: () => _showReinvestDialog(),
-            ),
-            const SizedBox(height: 12),
-            _buildActionButton(
-              icon: Icons.account_balance_wallet,
-              title: 'Withdrawn',
-              subtitle: 'Mark as withdrawn and close this deposit',
-              color: Colors.orange,
-              onTap: () => _showWithdrawDialog(),
-            ),
-            const SizedBox(height: 12),
-            _buildActionButton(
-              icon: Icons.more_horiz,
-              title: 'Other',
-              subtitle: 'Mark as closed for other reasons',
-              color: Colors.grey,
-              onTap: () => _showOtherDialog(),
-            ),
-
-            const SizedBox(height: 24),
-
-            // Lineage Info
-            if (_deposit!.isPartOfChain) ...[
-              Card(
-                color: Colors.blue[50],
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.account_tree, color: Colors.blue[700]),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Part of Chain',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blue[700],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      if (_deposit!.previousDepositId != null)
-                        Text('Previous: ${_deposit!.previousDepositId}'),
-                      if (_deposit!.nextDepositId != null)
-                        Text('Next: ${_deposit!.nextDepositId}'),
-                      if (_deposit!.chainId != null)
-                        Text('Chain ID: ${_deposit!.chainId}'),
-                    ],
-                  ),
-                ),
+                  );
+                },
+                tooltip: 'Edit Deposit',
               ),
             ],
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                   // Information Section
+                  _buildHeaderCard(),
+                  const SizedBox(height: 24),
+                  
+                  Text(
+                    'What would you like to do?',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'The maturity amount is ready. Choose an action to close this deposit.',
+                    style: TextStyle(color: Colors.grey[600]),
+                  ),
+                  const SizedBox(height: 20),
+
+                  _buildActionCard(
+                    title: 'Reinvest Matured Amount',
+                    subtitle: 'Create a new deposit and link it to this one',
+                    icon: Icons.repeat_rounded,
+                    color: Colors.green,
+                    onTap: _showReinvestDialog,
+                  ),
+                  const SizedBox(height: 12),
+                  _buildActionCard(
+                    title: 'Mark as Withdrawn',
+                    subtitle: 'Funds have been credited to savings account',
+                    icon: Icons.account_balance_wallet_rounded,
+                    color: Colors.blue,
+                    onTap: _showWithdrawDialog,
+                  ),
+                  const SizedBox(height: 12),
+                  _buildActionCard(
+                    title: 'Other Closure',
+                    subtitle: 'Close for any other reason',
+                    icon: Icons.close_rounded,
+                    color: Colors.grey,
+                    onTap: _showOtherDialog,
+                  ),
+
+                  if (_deposit!.isPartOfChain) ...[
+                    const SizedBox(height: 32),
+                    _buildLineageSummary(),
+                  ],
+                  
+                  const SizedBox(height: 100),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProcessedView() {
+    final statusColor = _deposit!.closureType == ClosureType.reinvested
+        ? Colors.green
+        : (_deposit!.closureType == ClosureType.withdrawn ? Colors.blue : Colors.grey);
+    
+    final icon = _deposit!.closureType == ClosureType.reinvested
+        ? Icons.repeat
+        : (_deposit!.closureType == ClosureType.withdrawn ? Icons.account_balance_wallet : Icons.check_circle);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Processed Deposit')),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: statusColor.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, size: 80, color: statusColor),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              _deposit!.closureType == ClosureType.reinvested
+                  ? 'Reinvested'
+                  : (_deposit!.closureType == ClosureType.withdrawn ? 'Withdrawn' : 'Closed'),
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'This deposit was processed on\n${_formatDate(_deposit!.updatedAt)}',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 32),
+            ElevatedButton(
+              onPressed: () => context.pop(),
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 12)),
+              child: const Text('Close'),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              label,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.grey[600],
+  Widget _buildHeaderCard() {
+    return Card(
+      elevation: 0,
+      color: Colors.blue[50],
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _deposit!.bankName,
+                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        'Sr No: ${_deposit!.srNo}',
+                        style: TextStyle(color: Colors.blue[700], fontWeight: FontWeight.w600),
+                      ),
+                    ],
                   ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.blue,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Text(
+                    'MATURED',
+                    style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
             ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w500,
-                  ),
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Divider(),
+            ),
+            _buildInfoRow('Holders', _deposit!.holdersDisplay),
+            _buildInfoRow('Account info', '${_deposit!.accountNumber} / ${_deposit!.fdrNo}'),
+            _buildInfoRow('Amount Deposited', '₹${_deposit!.amountDeposited.toStringAsFixed(2)}'),
+            _buildInfoRow('Maturity Amount', '₹${_deposit!.dueAmount.toStringAsFixed(2)}', isBold: true),
+            _buildInfoRow('Maturity Date', _formatDate(_deposit!.dueDate)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value, {bool isBold = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: TextStyle(color: Colors.blueGrey[600])),
+          Text(
+            value,
+            style: TextStyle(
+              fontWeight: isBold ? FontWeight.bold : FontWeight.w500,
+              fontSize: isBold ? 16 : 14,
             ),
           ),
         ],
@@ -340,55 +294,94 @@ class _MaturedDepositPageState extends ConsumerState<MaturedDepositPage> {
     );
   }
 
-  Widget _buildActionButton({
-    required IconData icon,
+  Widget _buildActionCard({
     required String title,
     required String subtitle,
+    required IconData icon,
     required Color color,
     required VoidCallback onTap,
   }) {
-    return Card(
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: color.withOpacity(0.1),
-          child: Icon(icon, color: color),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.grey[200]!),
+          borderRadius: BorderRadius.circular(16),
         ),
-        title: Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.bold),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  Text(subtitle, style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: Colors.grey[400]),
+          ],
         ),
-        subtitle: Text(subtitle),
-        trailing: Icon(Icons.arrow_forward_ios, color: color),
-        onTap: onTap,
+      ),
+    );
+  }
+
+  Widget _buildLineageSummary() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.account_tree_outlined, size: 20),
+              const SizedBox(width: 8),
+              Text('Chain Lineage', style: const TextStyle(fontWeight: FontWeight.bold)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'This deposit is part of a series. Actions here will affect the chain statistics.',
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          ),
+        ],
       ),
     );
   }
 
   String _formatDate(DateTime date) {
-    return '${date.day.toString().padLeft(2, '0')}-'
-        '${date.month.toString().padLeft(2, '0')}-${date.year}';
+    return '${date.day.toString().padLeft(2, '0')}-${date.month.toString().padLeft(2, '0')}-${date.year}';
   }
 
   void _showReinvestDialog() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Reinvest Matured Amount'),
-        content: Text(
-          'This will mark the current deposit as reinvested and create a new deposit with the matured amount (₹${_deposit!.dueAmount.toStringAsFixed(2)}).\n\n'
-          'The new deposit will be automatically linked to this one in the lineage chain.',
-        ),
+        title: const Text('Reinvest Amount'),
+        content: const Text('This will create a new deposit form pre-filled with the maturity amount. This deposit will be marked as "Reinvested".'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () {
-              Navigator.of(context).pop();
+              Navigator.pop(context);
               _handleReinvest();
             },
-            child: const Text('Reinvest'),
+            child: const Text('Continue'),
           ),
         ],
       ),
@@ -399,21 +392,16 @@ class _MaturedDepositPageState extends ConsumerState<MaturedDepositPage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Mark as Withdrawn'),
-        content: Text(
-          'This will mark the deposit as withdrawn and close it. The matured amount (₹${_deposit!.dueAmount.toStringAsFixed(2)}) will be considered withdrawn.',
-        ),
+        title: const Text('Confirm Withdrawal'),
+        content: const Text('Are you sure the funds have been withdrawn and confirmed? This will close the deposit.'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () {
-              Navigator.of(context).pop();
+              Navigator.pop(context);
               _handleWithdraw();
             },
-            child: const Text('Mark Withdrawn'),
+            child: const Text('Confirm'),
           ),
         ],
       ),
@@ -421,86 +409,38 @@ class _MaturedDepositPageState extends ConsumerState<MaturedDepositPage> {
   }
 
   void _showOtherDialog() {
-    final notesController = TextEditingController();
-
+    final noteController = TextEditingController();
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Mark as Closed'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-                'This will mark the deposit as closed. Please provide a reason:'),
-            const SizedBox(height: 16),
-            TextField(
-              controller: notesController,
-              decoration: const InputDecoration(
-                labelText: 'Reason for closure',
-                hintText: 'e.g., Transferred to another bank, etc.',
-              ),
-              maxLines: 3,
-            ),
-          ],
+        title: const Text('Close Deposit'),
+        content: TextField(
+          controller: noteController,
+          decoration: const InputDecoration(hintText: 'Reason for closure (optional)'),
+          maxLines: 2,
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () {
-              Navigator.of(context).pop();
-              _handleOther(notesController.text.trim());
+              Navigator.pop(context);
+              _handleOther(noteController.text.trim());
             },
-            child: const Text('Mark Closed'),
+            child: const Text('Close'),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _handleReinvest() async {
-    try {
-      // Mark current deposit as reinvested
-      final updatedDeposit = _deposit!.close(ClosureType.reinvested);
-      final repo = ref.read(depositRepositoryProvider);
-      await repo.updateDeposit(updatedDeposit);
-
-      // Refresh lineage data
-      ref.invalidate(depositsListProvider);
-      ref.invalidate(chainsWithDepositsProvider);
-      ref.invalidate(orphanedDepositsProvider);
-
-      // Navigate to create new deposit with pre-filled data
-      final queryParams = {
-        'previousDepositId': _deposit!.id,
-        'amountDeposited': _deposit!.dueAmount.toString(),
-        'holderName': _deposit!.holdersDisplay,
-        'bankName': _deposit!.bankName,
-        'accountNumber': _deposit!.accountNumber,
-        'dateDeposited': DateTime.now().millisecondsSinceEpoch.toString(),
-        'dueDate': DateTime.now()
-            .add(const Duration(days: 365))
-            .millisecondsSinceEpoch
-            .toString(),
-      };
-
-      final uri = Uri(
-        path: '/deposit/new',
-        queryParameters: queryParams,
-      );
-
-      if (mounted) {
-        context.push(uri.toString());
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
-      }
-    }
+  void _handleReinvest() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DepositFormPage(
+          reinvestSeed: ReinvestSeed.fromDeposit(_deposit!),
+        ),
+      ),
+    );
   }
 
   Future<void> _handleWithdraw() async {
@@ -509,22 +449,14 @@ class _MaturedDepositPageState extends ConsumerState<MaturedDepositPage> {
       final repo = ref.read(depositRepositoryProvider);
       await repo.updateDeposit(updatedDeposit);
 
-      // Refresh lineage data
       ref.invalidate(depositsListProvider);
       ref.invalidate(chainsWithDepositsProvider);
       ref.invalidate(orphanedDepositsProvider);
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Deposit marked as withdrawn')),
-        );
-        context.pop();
-      }
+      if (mounted) context.pop();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
     }
   }
@@ -535,22 +467,14 @@ class _MaturedDepositPageState extends ConsumerState<MaturedDepositPage> {
       final repo = ref.read(depositRepositoryProvider);
       await repo.updateDeposit(updatedDeposit);
 
-      // Refresh lineage data
       ref.invalidate(depositsListProvider);
       ref.invalidate(chainsWithDepositsProvider);
       ref.invalidate(orphanedDepositsProvider);
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Deposit marked as closed')),
-        );
-        context.pop();
-      }
+      if (mounted) context.pop();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
     }
   }

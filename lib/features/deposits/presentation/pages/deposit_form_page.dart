@@ -1,59 +1,65 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:uuid/uuid.dart';
+
 import '../../domain/entities/deposit.dart';
 import '../providers/deposit_providers.dart';
 import '../providers/lineage_providers.dart';
 import '../../../../core/utils/notification_service.dart';
 
-class DepositFormPage extends ConsumerWidget {
-  final String? depositId;
+class ReinvestSeed {
+  final String previousDepositId;
+  final String holderName;
+  final String bankName;
+  final String accountNumber;
+  final double amountDeposited;
+  final double? dueAmount;
+  final DateTime dateDeposited;
+  final DateTime dueDate;
 
-  const DepositFormPage({super.key, this.depositId});
+  const ReinvestSeed({
+    required this.previousDepositId,
+    required this.holderName,
+    required this.bankName,
+    required this.accountNumber,
+    required this.amountDeposited,
+    this.dueAmount,
+    required this.dateDeposited,
+    required this.dueDate,
+  });
 
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isEditing = depositId != null;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(isEditing ? 'Edit Deposit' : 'New Deposit'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        actions: [
-          if (isEditing)
-            IconButton(
-              icon: const Icon(Icons.delete),
-              onPressed: () {
-                // TODO: Implement delete
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Delete feature coming soon!')),
-                );
-              },
-            ),
-        ],
-      ),
-      body: _DepositFormBody(depositId: depositId),
+  factory ReinvestSeed.fromDeposit(Deposit deposit) {
+    final now = DateTime.now();
+    final defaultDue = now.add(const Duration(days: 365));
+    return ReinvestSeed(
+      previousDepositId: deposit.id,
+      holderName: deposit.holdersDisplay,
+      bankName: deposit.bankName,
+      accountNumber: deposit.accountNumber,
+      amountDeposited: deposit.dueAmount,
+      dueAmount: deposit.dueAmount,
+      dateDeposited: now,
+      dueDate: defaultDue,
     );
   }
 }
 
-class _DepositFormBody extends ConsumerStatefulWidget {
+class DepositFormPage extends ConsumerStatefulWidget {
   final String? depositId;
-  const _DepositFormBody({required this.depositId});
+  final ReinvestSeed? reinvestSeed;
+
+  const DepositFormPage({super.key, this.depositId, this.reinvestSeed});
 
   @override
-  ConsumerState<_DepositFormBody> createState() => _DepositFormBodyState();
+  ConsumerState<DepositFormPage> createState() => _DepositFormPageState();
 }
 
-class _DepositFormBodyState extends ConsumerState<_DepositFormBody> {
+class _DepositFormPageState extends ConsumerState<DepositFormPage> {
   final _formKey = GlobalKey<FormState>();
   final _srNoCtrl = TextEditingController();
-  final List<TextEditingController> _holderCtrls = [
-    TextEditingController()
-  ]; // Start with one holder
+  final List<TextEditingController> _holderCtrls = [TextEditingController()];
   final _bankCtrl = TextEditingController();
   final _accountCtrl = TextEditingController();
   final _fdrCtrl = TextEditingController();
@@ -62,55 +68,109 @@ class _DepositFormBodyState extends ConsumerState<_DepositFormBody> {
   DateTime? _dateDeposited;
   DateTime? _dueDate;
   bool _isLoading = false;
+  bool _didPrefillFromQueryParams = false;
 
   @override
   void initState() {
     super.initState();
     if (widget.depositId != null) {
       _loadDeposit();
+    } else {
+      _getNextSrNo();
+      if (widget.reinvestSeed != null) {
+        _applyReinvestSeed();
+      }
     }
+  }
+
+  Future<void> _getNextSrNo() async {
+    try {
+      final repo = ref.read(depositRepositoryProvider);
+      final next = await repo.getNextSerialNumber();
+      if (mounted && _srNoCtrl.text.isEmpty) {
+        setState(() => _srNoCtrl.text = next);
+      }
+    } catch (_) {}
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (widget.depositId == null) {
+    if (widget.depositId == null &&
+        widget.reinvestSeed == null &&
+        !_didPrefillFromQueryParams) {
       _loadFromQueryParams();
+      _didPrefillFromQueryParams = true;
     }
+  }
+
+  void _applyReinvestSeed() {
+    final seed = widget.reinvestSeed;
+    if (seed == null) return;
+
+    if (_holderCtrls.isNotEmpty && _holderCtrls[0].text.trim().isEmpty) {
+      _holderCtrls[0].text = seed.holderName;
+    }
+    if (_bankCtrl.text.trim().isEmpty) {
+      _bankCtrl.text = seed.bankName;
+    }
+    if (_accountCtrl.text.trim().isEmpty) {
+      _accountCtrl.text = seed.accountNumber;
+    }
+    if (_amountCtrl.text.trim().isEmpty) {
+      _amountCtrl.text = seed.amountDeposited.toStringAsFixed(2);
+    }
+    if (_dueAmountCtrl.text.trim().isEmpty && seed.dueAmount != null) {
+      _dueAmountCtrl.text = seed.dueAmount!.toStringAsFixed(2);
+    }
+    _dateDeposited ??= seed.dateDeposited;
+    _dueDate ??= seed.dueDate;
   }
 
   void _loadFromQueryParams() {
     try {
       final uri = GoRouterState.of(context).uri;
       if (uri.queryParameters.isNotEmpty) {
-        _srNoCtrl.text = uri.queryParameters['srNo'] ?? '';
-        _holderCtrls[0].text = uri.queryParameters['holderName'] ?? '';
-        _bankCtrl.text = uri.queryParameters['bankName'] ?? '';
-        _accountCtrl.text = uri.queryParameters['accountNumber'] ?? '';
-        _fdrCtrl.text = uri.queryParameters['fdrNo'] ?? '';
-        _amountCtrl.text = uri.queryParameters['amountDeposited'] ?? '';
-        _dueAmountCtrl.text = uri.queryParameters['dueAmount'] ?? '';
+        if (_srNoCtrl.text.trim().isEmpty) {
+          _srNoCtrl.text = uri.queryParameters['srNo'] ?? '';
+        }
+        if (_holderCtrls.isNotEmpty && _holderCtrls[0].text.trim().isEmpty) {
+          _holderCtrls[0].text = uri.queryParameters['holderName'] ?? '';
+        }
+        if (_bankCtrl.text.trim().isEmpty) {
+          _bankCtrl.text = uri.queryParameters['bankName'] ?? '';
+        }
+        if (_accountCtrl.text.trim().isEmpty) {
+          _accountCtrl.text = uri.queryParameters['accountNumber'] ?? '';
+        }
+        if (_fdrCtrl.text.trim().isEmpty) {
+          _fdrCtrl.text = uri.queryParameters['fdrNo'] ?? '';
+        }
+        if (_amountCtrl.text.trim().isEmpty) {
+          _amountCtrl.text = uri.queryParameters['amountDeposited'] ?? '';
+        }
+        if (_dueAmountCtrl.text.trim().isEmpty) {
+          _dueAmountCtrl.text = uri.queryParameters['dueAmount'] ?? '';
+        }
 
         final dateDepositedMs =
             int.tryParse(uri.queryParameters['dateDeposited'] ?? '');
-        if (dateDepositedMs != null) {
+        if (dateDepositedMs != null && _dateDeposited == null) {
           _dateDeposited = DateTime.fromMillisecondsSinceEpoch(dateDepositedMs);
         }
 
         final dueDateMs = int.tryParse(uri.queryParameters['dueDate'] ?? '');
-        if (dueDateMs != null) {
+        if (dueDateMs != null && _dueDate == null) {
           _dueDate = DateTime.fromMillisecondsSinceEpoch(dueDateMs);
         }
       }
     } catch (e) {
-      // Handle case where GoRouterState is not available
-      print('Error loading query params: $e');
+      if (kDebugMode) debugPrint('Error loading query params: $e');
     }
   }
 
   void _addHolder() {
     if (_holderCtrls.length < 2) {
-      // Maximum 2 holders
       setState(() {
         _holderCtrls.add(TextEditingController());
       });
@@ -148,16 +208,10 @@ class _DepositFormBodyState extends ConsumerState<_DepositFormBody> {
       final deposit = await repo.getDepositById(widget.depositId!);
       if (deposit != null && mounted) {
         _srNoCtrl.text = deposit.srNo;
-        // Load holders into controllers
         _holderCtrls.clear();
         for (int i = 0; i < deposit.holders.length; i++) {
-          if (i < _holderCtrls.length) {
-            _holderCtrls[i].text = deposit.holders[i];
-          } else {
-            _holderCtrls.add(TextEditingController(text: deposit.holders[i]));
-          }
+          _holderCtrls.add(TextEditingController(text: deposit.holders[i]));
         }
-        // Ensure at least one holder controller exists
         if (_holderCtrls.isEmpty) {
           _holderCtrls.add(TextEditingController());
         }
@@ -180,6 +234,51 @@ class _DepositFormBodyState extends ConsumerState<_DepositFormBody> {
     }
   }
 
+  Future<void> _delete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Deposit'),
+        content: const Text('Are you sure you want to delete this deposit?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      setState(() => _isLoading = true);
+      try {
+        final repo = ref.read(depositRepositoryProvider);
+        await repo.deleteDeposit(widget.depositId!);
+        ref.invalidate(depositsListProvider);
+        ref.invalidate(chainsWithDepositsProvider);
+        ref.invalidate(orphanedDepositsProvider);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Deposit deleted successfully')),
+          );
+          Navigator.of(context).pop();
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error: $e')),
+          );
+          setState(() => _isLoading = false);
+        }
+      }
+    }
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     if (_dateDeposited == null || _dueDate == null) {
@@ -193,18 +292,19 @@ class _DepositFormBodyState extends ConsumerState<_DepositFormBody> {
     setState(() => _isLoading = true);
     try {
       final repo = ref.read(depositRepositoryProvider);
+      final lineageRepo = ref.read(lineageRepositoryProvider);
 
-      // Check if this is a reinvestment (has previousDepositId in query params)
-      String? previousDepositId;
+      String? previousDepositId = widget.reinvestSeed?.previousDepositId;
       try {
         final uri = GoRouterState.of(context).uri;
-        previousDepositId = uri.queryParameters['previousDepositId'];
-      } catch (e) {
-        // Ignore if GoRouterState is not available
-      }
+        previousDepositId ??= uri.queryParameters['previousDepositId'];
+      } catch (_) {}
+
+      final newId = widget.depositId ?? const Uuid().v4();
+      final now = DateTime.now();
 
       final deposit = Deposit(
-        id: widget.depositId ?? '',
+        id: newId,
         srNo: _srNoCtrl.text.trim(),
         holders: _holderCtrls
             .map((ctrl) => ctrl.text.trim())
@@ -219,8 +319,8 @@ class _DepositFormBodyState extends ConsumerState<_DepositFormBody> {
         dueDate: _dueDate!,
         status: DepositStatus.active,
         previousDepositId: previousDepositId,
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
+        createdAt: now,
+        updatedAt: now,
         notes: null,
         attachments: const [],
       );
@@ -230,221 +330,174 @@ class _DepositFormBodyState extends ConsumerState<_DepositFormBody> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(issues.join('\n'))),
         );
+        setState(() => _isLoading = false);
         return;
       }
 
-      if (widget.depositId != null) {
-        await repo.updateDeposit(deposit);
-        // Reschedule notifications in case dates changed
-        await NotificationService.scheduleForDeposit(deposit);
-      } else {
-        final saved = await repo.createDeposit(deposit);
-        await NotificationService.scheduleForDeposit(saved);
+      final saved = widget.depositId != null 
+          ? await repo.updateDeposit(deposit)
+          : await repo.createDeposit(deposit);
 
-        // If this is a reinvestment, create a chain and link deposits
-        if (previousDepositId != null) {
-          try {
-            print('🔄 Creating chain for reinvestment...');
-            print('Previous Deposit ID: $previousDepositId');
-            print('New Deposit ID: ${saved.id}');
+      await NotificationService.scheduleForDeposit(saved);
 
-            final lineageRepo = ref.read(lineageRepositoryProvider);
-
-            // Always create a new chain for reinvestments
-            print('Creating new chain...');
-            final chain = await lineageRepo.createChain(
-              name: 'Chain from ${deposit.bankName}',
-              description:
-                  'Deposit chain starting from ${deposit.bankName} - ${deposit.srNo}',
-            );
-            print('✅ Chain created: ${chain.name} (${chain.id})');
-
-            // Add the parent deposit to the chain
-            await lineageRepo.addDepositToChain(chain.id, previousDepositId);
-            print('✅ Parent deposit added to chain');
-
-            // Add the new deposit to the chain
-            await lineageRepo.addDepositToChain(chain.id, saved.id);
-            print('✅ New deposit added to chain');
-
-            // Create the link between deposits
-            await lineageRepo.linkDeposits(
-              parentDepositId: previousDepositId,
-              childDepositId: saved.id,
-              reinvestedAmount: saved.amountDeposited,
-              notes: 'Reinvestment from matured deposit',
-            );
-            print('✅ Deposits linked successfully');
-          } catch (e) {
-            // Log error but don't fail the save
-            print('❌ Error creating chain and linking deposits: $e');
-            print('Stack trace: ${StackTrace.current}');
-          }
+      if (previousDepositId != null && widget.depositId == null) {
+        // Handle Reinvestment automatically via LineageRepository
+        var chain = await lineageRepo.getDepositChain(previousDepositId);
+        if (chain == null) {
+          chain = await lineageRepo.createChain(
+            name: '${saved.bankName} Chain',
+            description: 'Automatic chain from reinvestment',
+          );
+          await lineageRepo.addDepositToChain(chain.id, previousDepositId);
         }
+        
+        await lineageRepo.addDepositToChain(chain.id, saved.id);
+        await lineageRepo.linkDeposits(
+          parentDepositId: previousDepositId,
+          childDepositId: saved.id,
+          reinvestedAmount: saved.amountDeposited,
+          notes: 'Reinvestment from matured deposit',
+        );
       }
 
-      // Refresh list and lineage data
       ref.invalidate(depositsListProvider);
       ref.invalidate(chainsWithDepositsProvider);
       ref.invalidate(orphanedDepositsProvider);
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to save: $e')),
-      );
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save: $e')),
+        );
+        setState(() => _isLoading = false);
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    final isEditing = widget.depositId != null;
 
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Form(
-        key: _formKey,
-        child: ListView(
-          children: [
-            TextFormField(
-              controller: _srNoCtrl,
-              decoration: const InputDecoration(labelText: 'Sr No'),
-              keyboardType: TextInputType.number,
-              validator: (v) =>
-                  (v == null || v.trim().isEmpty) ? 'Required' : null,
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(isEditing ? 'Edit Deposit' : 'New Deposit'),
+        actions: [
+          if (isEditing)
+            IconButton(
+              icon: const Icon(Icons.delete),
+              onPressed: _isLoading ? null : _delete,
+              tooltip: 'Delete Deposit',
             ),
-            const SizedBox(height: 12),
-            // Multiple Holders Section
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Text(
-                          'Holders',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        const Spacer(),
-                        if (_holderCtrls.length < 2)
-                          IconButton(
-                            onPressed: _addHolder,
-                            icon: const Icon(Icons.add_circle),
-                            tooltip: 'Add another holder',
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    ...List.generate(
-                      _holderCtrls.length,
-                      (index) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                controller: _holderCtrls[index],
-                                decoration: InputDecoration(
-                                  labelText: index == 0
-                                      ? 'Primary Holder'
-                                      : 'Secondary Holder',
-                                  hintText: 'Enter holder name',
-                                ),
-                                validator: (v) {
-                                  if (index == 0 &&
-                                      (v == null || v.trim().isEmpty)) {
-                                    return 'Primary holder is required';
-                                  }
-                                  return null;
-                                },
-                              ),
-                            ),
-                            if (_holderCtrls.length > 1)
-                              IconButton(
-                                onPressed: () => _removeHolder(index),
-                                icon: const Icon(Icons.remove_circle),
-                                tooltip: 'Remove holder',
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+        ],
+      ),
+      body: _isLoading 
+        ? const Center(child: CircularProgressIndicator())
+        : Padding(
+            padding: const EdgeInsets.all(16),
+            child: Form(
+              key: _formKey,
+              child: ListView(
+                children: [
+                   _buildTextField(_srNoCtrl, 'Sr No', TextInputType.number),
+                   const SizedBox(height: 12),
+                   _buildHoldersSection(),
+                   const SizedBox(height: 12),
+                   _buildTextField(_bankCtrl, 'Bank Name / PPF'),
+                   const SizedBox(height: 12),
+                   _buildTextField(_accountCtrl, 'Account Number'),
+                   const SizedBox(height: 12),
+                   _buildTextField(_fdrCtrl, 'FDR No'),
+                   const SizedBox(height: 12),
+                   _buildTextField(_amountCtrl, 'Amount Deposited', TextInputType.number),
+                   const SizedBox(height: 12),
+                   _buildTextField(_dueAmountCtrl, 'Due Amount', TextInputType.number),
+                   const SizedBox(height: 12),
+                   _DatePickerTile(
+                     label: 'Date Deposited',
+                     date: _dateDeposited,
+                     onPick: (d) => setState(() => _dateDeposited = d),
+                   ),
+                   const SizedBox(height: 12),
+                   _DatePickerTile(
+                     label: 'Due Date',
+                     date: _dueDate,
+                     onPick: (d) => setState(() => _dueDate = d),
+                   ),
+                   const SizedBox(height: 32),
+                   ElevatedButton.icon(
+                     onPressed: _save,
+                     icon: const Icon(Icons.save),
+                     label: Text(isEditing ? 'Update Deposit' : 'Save Deposit'),
+                     style: ElevatedButton.styleFrom(
+                       padding: const EdgeInsets.symmetric(vertical: 16),
+                       backgroundColor: Colors.green[700],
+                       foregroundColor: Colors.white,
+                     ),
+                   ),
+                   const SizedBox(height: 80),
+                ],
               ),
             ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _bankCtrl,
-              decoration: const InputDecoration(labelText: 'Bank Name / PPF'),
-              validator: (v) =>
-                  (v == null || v.trim().isEmpty) ? 'Required' : null,
+          ),
+    );
+  }
+
+  Widget _buildTextField(TextEditingController ctrl, String label, [TextInputType? type]) {
+    return TextFormField(
+      controller: ctrl,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        filled: true,
+        fillColor: Colors.grey[50],
+      ),
+      keyboardType: type,
+      validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+    );
+  }
+
+  Widget _buildHoldersSection() {
+    return Card(
+      elevation: 0,
+      color: Colors.grey[100],
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                const Text('Holders', style: TextStyle(fontWeight: FontWeight.bold)),
+                const Spacer(),
+                if (_holderCtrls.length < 2)
+                  TextButton.icon(
+                    onPressed: _addHolder,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add'),
+                  ),
+              ],
             ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _accountCtrl,
-              decoration: const InputDecoration(labelText: 'Account Number'),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _fdrCtrl,
-              decoration: const InputDecoration(labelText: 'FDR No'),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _amountCtrl,
-              decoration: const InputDecoration(labelText: 'Amount Deposited'),
-              keyboardType: TextInputType.number,
-              validator: (v) {
-                final d = double.tryParse((v ?? '').trim());
-                if (d == null || d <= 0) return 'Enter a valid amount';
-                return null;
-              },
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _dueAmountCtrl,
-              decoration: const InputDecoration(labelText: 'Due Amount'),
-              keyboardType: TextInputType.number,
-              validator: (v) {
-                final d = double.tryParse((v ?? '').trim());
-                if (d == null || d <= 0) return 'Enter a valid amount';
-                return null;
-              },
-            ),
-            const SizedBox(height: 12),
-            _DatePickerTile(
-              label: 'Date Deposited (dd-MM-yyyy)',
-              date: _dateDeposited,
-              onPick: (d) => setState(() => _dateDeposited = d),
-            ),
-            const SizedBox(height: 12),
-            _DatePickerTile(
-              label: 'Due Date (dd-MM-yyyy)',
-              date: _dueDate,
-              onPick: (d) => setState(() => _dueDate = d),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: _isLoading ? null : _save,
-              icon: _isLoading
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.save),
-              label: Text(
-                  widget.depositId != null ? 'Update Deposit' : 'Save Deposit'),
-            ),
+            ...List.generate(_holderCtrls.length, (i) => Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _holderCtrls[i],
+                      decoration: InputDecoration(
+                        labelText: i == 0 ? 'Primary' : 'Secondary',
+                        isDense: true,
+                      ),
+                      validator: (v) => (i == 0 && (v == null || v.trim().isEmpty)) ? 'Required' : null,
+                    ),
+                  ),
+                  if (_holderCtrls.length > 1)
+                    IconButton(
+                      icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
+                      onPressed: () => _removeHolder(i),
+                    ),
+                ],
+              ),
+            )),
           ],
         ),
       ),
@@ -456,28 +509,26 @@ class _DatePickerTile extends StatelessWidget {
   final String label;
   final DateTime? date;
   final ValueChanged<DateTime> onPick;
-  const _DatePickerTile(
-      {required this.label, required this.date, required this.onPick});
+
+  const _DatePickerTile({required this.label, required this.date, required this.onPick});
 
   @override
   Widget build(BuildContext context) {
-    final text = date == null
-        ? 'Select date'
-        : '${date!.day.toString().padLeft(2, '0')}-${date!.month.toString().padLeft(2, '0')}-${date!.year}';
+    final text = date == null ? 'Select Date' : '${date!.day}/${date!.month}/${date!.year}';
     return ListTile(
-      contentPadding: EdgeInsets.zero,
       title: Text(label),
       subtitle: Text(text),
-      trailing: const Icon(Icons.date_range),
+      trailing: const Icon(Icons.calendar_today),
+      tileColor: Colors.grey[100],
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       onTap: () async {
-        final now = DateTime.now();
-        final picked = await showDatePicker(
+        final d = await showDatePicker(
           context: context,
-          initialDate: date ?? now,
-          firstDate: DateTime(now.year - 50),
-          lastDate: DateTime(now.year + 50),
+          initialDate: date ?? DateTime.now(),
+          firstDate: DateTime(2000),
+          lastDate: DateTime(2100),
         );
-        if (picked != null) onPick(picked);
+        if (d != null) onPick(d);
       },
     );
   }

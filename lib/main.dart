@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:go_router/go_router.dart';
 
 import 'temp_firebase_options.dart'; // Temporary for testing
 import 'core/constants/app_constants.dart';
 import 'core/utils/hive_bootstrap.dart';
 import 'shared/presentation/theme/app_theme.dart';
 import 'core/utils/notification_service.dart';
-import 'features/auth/presentation/widgets/auth_wrapper.dart';
+import 'shared/presentation/routing/app_router.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,12 +47,14 @@ class DepositsApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return MaterialApp(
+    final GoRouter router = ref.watch(appRouterProvider);
+
+    return MaterialApp.router(
       title: AppConstants.appName,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,
-      home: const AuthWrapper(), // Use AuthWrapper instead of router
+      routerConfig: router,
       debugShowCheckedModeBanner: false,
     );
   }

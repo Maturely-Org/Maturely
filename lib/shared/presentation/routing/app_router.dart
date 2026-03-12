@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../pages/main_navigation_page.dart';
+import '../../../features/auth/presentation/widgets/auth_wrapper.dart';
 import '../../../features/deposits/presentation/pages/dashboard_page.dart';
 import '../../../features/deposits/presentation/pages/deposit_form_page.dart';
 import '../../../features/deposits/presentation/pages/deposit_details_page.dart';
@@ -21,7 +21,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/',
         name: 'home',
-        builder: (context, state) => const MainNavigationPage(),
+        builder: (context, state) => const AuthWrapper(),
       ),
       GoRoute(
         path: '/dashboard',

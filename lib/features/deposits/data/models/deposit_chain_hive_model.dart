@@ -48,6 +48,32 @@ class DepositChainHiveModel {
     required this.status,
   });
 
+  DepositChainHiveModel copyWith({
+    String? id,
+    String? name,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    String? description,
+    List<String>? depositIds,
+    int? totalDeposits,
+    double? totalAmount,
+    double? currentValue,
+    int? status,
+  }) {
+    return DepositChainHiveModel(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      description: description ?? this.description,
+      depositIds: depositIds ?? this.depositIds,
+      totalDeposits: totalDeposits ?? this.totalDeposits,
+      totalAmount: totalAmount ?? this.totalAmount,
+      currentValue: currentValue ?? this.currentValue,
+      status: status ?? this.status,
+    );
+  }
+
   factory DepositChainHiveModel.fromDomain(
     String id,
     String name,
